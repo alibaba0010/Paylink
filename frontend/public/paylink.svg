@@ -1,0 +1,19 @@
+<svg width="220" height="220" viewBox="0 0 220 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="220" height="220" rx="40" fill="#0A0F1E"></rect>
+
+  <!-- Chain Link Circle -->
+  <circle cx="110" cy="110" r="60" stroke="#00C896" stroke-width="10" stroke-linecap="round"></circle>
+
+  <!-- Broken link effect (gap) -->
+  <path d="M110 50 A60 60 0 0 1 170 110" stroke="#0A0F1E" stroke-width="14"></path>
+
+  <!-- P Letter -->
+  <path d="M75 75 V145 M75 75 H110 Q130 75 130 95 Q130 115 110 115 H75" stroke="#00C896" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+
+  <!-- L Letter -->
+  <path d="M135 75 V145 H170" stroke="#00C896" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+
+  <!-- Accent dot (link node / transaction point) -->
+  <circle cx="170" cy="110" r="6" fill="#FFD166"></circle>
+</svg>

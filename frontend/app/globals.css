@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+@layer base {
+  body {
+    @apply bg-background text-white;
+    font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
+  }
+}
