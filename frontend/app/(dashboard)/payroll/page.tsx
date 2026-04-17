@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CircleAlert, SendHorizontal, Users } from 'lucide-react';
 import { PaymentForm } from '@/components/PaymentForm';
 import { CopyValueButton } from '@/components/CopyValueButton';
+import { UserAvatar } from '@/components/UserAvatar';
 import { fetchUserProfile, type UserProfile } from '@/lib/api';
 import { shortenAddress } from '@/lib/format';
 
@@ -149,15 +150,7 @@ export default function PayrollPage() {
             <div className="mt-5 rounded-2xl border border-[#1A2235] bg-[#0A1325] p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="h-14 w-14 overflow-hidden rounded-2xl border border-white/10 bg-[#081122]">
-                    {recipient.avatar_url ? (
-                      <img src={recipient.avatar_url} alt={recipient.username} className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[#00C896] font-bold text-[#0A0F1E]">
-                        {recipient.username[0].toUpperCase()}
-                      </div>
-                    )}
-                  </div>
+                  <UserAvatar name={recipient.username} className="h-14 w-14 text-2xl" />
                   <div>
                     <p className="text-lg font-semibold text-white">{recipient.display_name}</p>
                     <p className="text-sm text-[#8896B3]">@{recipient.username}</p>

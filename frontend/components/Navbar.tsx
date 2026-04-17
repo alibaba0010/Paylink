@@ -3,16 +3,19 @@
 import { usePathname } from 'next/navigation';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useEffect, useState, useRef } from 'react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import Link from 'next/link';
 import { clearOnboardedUser, getOnboardedUser, saveOnboardedUser } from '@/lib/onboarding-storage';
 import { fetchUserProfileByWallet, UserProfile } from '@/lib/api';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
 import { CopyValueButton } from '@/components/CopyValueButton';
+import { UserAvatar } from '@/components/UserAvatar';
 import { shortenAddress } from '@/lib/format';
 
 export function Navbar() {
   const pathname = usePathname();
   const { connected, publicKey, disconnect } = useWallet();
+  const { setVisible } = useWalletModal();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -68,7 +71,7 @@ export function Navbar() {
     return () => {
       isActive = false;
     };
-  }, [connected, publicKey]);
+  }, [connected, publicKey, pathname]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -84,65 +87,97 @@ export function Navbar() {
 
   return (
     <nav className="fixed right-6 top-6 z-50 flex items-center gap-4">
-      {user ? (
+      {connected ? (
         <div className="relative" ref={dropdownRef}>
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-[#0D1B35]/80 p-1.5 pr-4 backdrop-blur-md transition hover:border-[#00C896]/50 hover:bg-[#132442]"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                setIsDropdownOpen(!isDropdownOpen);
+              }
+            }}
+            className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-[#0D1B35]/80 p-1.5 pr-4 backdrop-blur-md transition hover:border-[#00C896]/50 hover:bg-[#132442] cursor-pointer"
           >
-            <div className="h-9 w-9 overflow-hidden rounded-xl border border-white/10 bg-[#081122]">
-              {user.avatar_url ? (
-                <img src={user.avatar_url} alt={user.username} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center bg-[#00C896] font-bold text-[#0A0F1E]">
-                  {user.username[0].toUpperCase()}
-                </div>
-              )}
-            </div>
+            <UserAvatar name={user ? user.username : '?'} className="h-9 w-9 text-sm" />
             <div className="text-left">
-              <p className="text-xs font-medium text-white group-hover:text-[#00C896]">{user.username}</p>
+              <p className="text-xs font-medium text-white group-hover:text-[#00C896]">
+                {user ? user.username : 'Unregistered'}
+              </p>
               <div className="flex items-center gap-2">
                 <p className="text-[10px] text-[#6D82A8]">
-                  {shortenAddress(user.wallet_address)}
+                  {shortenAddress(publicKey?.toBase58() || '')}
                 </p>
-                <CopyValueButton
-                  value={user.wallet_address}
-                  title="Copy wallet address"
-                  className="h-6 w-6 border-transparent bg-transparent"
-                />
+                {publicKey && (
+                  <CopyValueButton
+                    value={publicKey.toBase58()}
+                    title="Copy wallet address"
+                    className="h-6 w-6 border-transparent bg-transparent"
+                  />
+                )}
               </div>
             </div>
-          </button>
+          </div>
 
           {isDropdownOpen && (
             <div className="absolute right-0 mt-3 w-56 origin-top-right rounded-2xl border border-white/10 bg-[#0D1B35] p-2 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in duration-200">
               <div className="px-4 py-3">
-                <p className="text-sm font-bold text-white">{user.username}</p>
+                <p className="text-sm font-bold text-white">{user ? user.username : 'Unregistered'}</p>
                 <div className="mt-1 flex items-center gap-2">
-                  <p className="min-w-0 truncate text-xs text-[#6D82A8]">{shortenAddress(user.wallet_address, 6, 6)}</p>
-                  <CopyValueButton
-                    value={user.wallet_address}
-                    title="Copy wallet address"
-                    className="h-7 w-7 shrink-0"
-                  />
+                  <p className="min-w-0 truncate text-xs text-[#6D82A8]">
+                    {shortenAddress(publicKey?.toBase58() || '', 6, 6)}
+                  </p>
+                  {publicKey && (
+                    <CopyValueButton
+                      value={publicKey.toBase58()}
+                      title="Copy wallet address"
+                      className="h-7 w-7 shrink-0"
+                    />
+                  )}
                 </div>
               </div>
               <div className="h-px bg-white/5 my-1" />
-              <Link
-                href="/overview"
-                onClick={() => setIsDropdownOpen(false)}
-                className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href={`/u/${user.username}`}
-                onClick={() => setIsDropdownOpen(false)}
-                className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
-              >
-                Public Profile
-              </Link>
+              
+              {user ? (
+                <>
+                  <Link
+                    href="/overview"
+                    onClick={() => setIsDropdownOpen(false)}
+                    className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
+                  >
+                    Dashboard
+                  </Link>
+                  <Link
+                    href={`/u/${user.username}`}
+                    onClick={() => setIsDropdownOpen(false)}
+                    className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
+                  >
+                    Public Profile
+                  </Link>
+                </>
+              ) : (
+                <Link
+                  href="/onboard"
+                  onClick={() => setIsDropdownOpen(false)}
+                  className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#00C896] transition hover:bg-[#00C896]/10"
+                >
+                  Onboard Account
+                </Link>
+              )}
+              
               <div className="h-px bg-white/5 my-1" />
+              
+              <button
+                onClick={() => {
+                  setVisible(true);
+                  setIsDropdownOpen(false);
+                }}
+                className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
+              >
+                Change Wallet
+              </button>
+              
               <button
                 onClick={() => {
                   disconnect();

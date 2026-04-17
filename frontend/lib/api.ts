@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from "axios";
 
 export interface UserProfile {
   id: string;
@@ -17,7 +17,7 @@ export interface UserProfile {
 }
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001",
 });
 
 export { api };
@@ -25,7 +25,7 @@ export { api };
 export async function fetchUserProfile(username: string) {
   try {
     const { data } = await api.get<{ success: boolean; user: UserProfile }>(
-      `/users/${username}`
+      `/users/${username}`,
     );
 
     return data.user;
@@ -41,7 +41,7 @@ export async function fetchUserProfile(username: string) {
 export async function fetchUserProfileByWallet(walletAddress: string) {
   try {
     const { data } = await api.get<{ success: boolean; user: UserProfile }>(
-      `/users/by-wallet/${walletAddress}`
+      `/users/by-wallet/${walletAddress}`,
     );
 
     return data.user;
@@ -59,8 +59,8 @@ export async function onboardUser(payload: {
   walletAddress: string;
 }) {
   const { data } = await api.post<{ success: boolean; user: UserProfile }>(
-    '/onboard',
-    payload
+    "/onboard",
+    payload,
   );
 
   return data.user;
@@ -68,7 +68,7 @@ export async function onboardUser(payload: {
 
 export async function checkUsernameAvailability(username: string) {
   const { data } = await api.get<{ success: boolean; available: boolean }>(
-    `/users/available/${username}`
+    `/users/available/${username}`,
   );
 
   return data.available;

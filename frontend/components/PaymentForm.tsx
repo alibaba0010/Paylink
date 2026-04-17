@@ -85,10 +85,16 @@ export function PaymentForm({
     error:      '❌ Failed — try again',
   };
 
+  const isSelfPayment = connected && publicKey?.toBase58() === recipientWallet;
+
   return (
     <div className="flex flex-col gap-4">
       {!connected ? (
         <WalletConnectButton className="!h-12 !w-full !rounded-xl !bg-[#00C896] !font-bold !text-[#0A0F1E]" />
+      ) : isSelfPayment ? (
+        <div className="rounded-xl border border-[#FF5F82]/30 bg-[#FF5F82]/10 p-4 text-center text-[#FF5F82]">
+          You cannot send money to your own connected wallet.
+        </div>
       ) : (
         <>
           {/* Amount */}

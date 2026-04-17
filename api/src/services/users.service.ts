@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { getDb, normalizeDatabaseError } from "../db/client";
+import { supabase, DatabaseConnectionError } from "../db/supabase-client";
 
 export interface PublicUserProfile {
   id: string;
@@ -59,7 +59,7 @@ function validateUsername(username: string) {
 
   if (!USERNAME_PATTERN.test(normalizedUsername)) {
     throw new UserInputError(
-      "Username must be 3-20 characters using lowercase letters, numbers, or underscores"
+      "Username must be 3-20 characters using lowercase letters, numbers, or underscores",
     );
   }
 
@@ -88,140 +88,151 @@ export class UsersService {
   async createUser(input: OnboardInput) {
     const username = validateUsername(input.username);
     const walletAddress = validateWalletAddress(input.walletAddress);
+
+    // Check for existing users before attempting insert to return proper conflict errors,
+    // as Supabase RLS might throw a generic 42501 policy violation instead of 23505 unique violation.
+    const existingWalletUser = await this.getUserByWalletAddress(walletAddress);
+    if (existingWalletUser) {
+      throw new UserConflictError("Wallet address is already onboarded");
+    }
+
+    const isUsernameAvail = await this.isUsernameAvailable(username);
+    if (!isUsernameAvail) {
+      throw new UserConflictError("Username is already taken");
+    }
+
     const avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
-    const db = getDb();
 
     try {
-      const result = await db.query<DbUserRow>(
-        `
-          INSERT INTO users (username, display_name, wallet_address, avatar_url)
-          VALUES ($1, $2, $3, $4)
-          RETURNING
-            id,
-            username,
-            display_name,
-            wallet_address,
-            avatar_url,
-            bio,
-            is_verified,
-            total_payments,
-            total_received AS total_volume_usdc,
-            twitter,
-            github,
-            linkedin
-        `,
-        [username, username, walletAddress, avatarUrl]
-      );
+      const { data, error } = await supabase
+        .from("users")
+        .insert({
+          username,
+          display_name: username,
+          wallet_address: walletAddress,
+          avatar_url: avatarUrl,
+        })
+        .select(
+          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+        )
+        .single();
 
-      return toPublicUserProfile(result.rows[0]);
+      if (error) {
+        throw error;
+      }
+
+      return toPublicUserProfile(data as unknown as DbUserRow);
     } catch (error: any) {
       if (error?.code === "23505") {
-        if (
-          typeof error.constraint === "string" &&
-          error.constraint.includes("wallet")
-        ) {
+        if (error.message?.includes("wallet")) {
           throw new UserConflictError("Wallet address is already onboarded");
         }
 
         throw new UserConflictError("Username is already taken");
       }
 
-      throw normalizeDatabaseError(error);
+      // Handle RLS errors explicitly if they still occur
+      if (error?.code === "42501" || error?.message?.includes("row-level security")) {
+        throw new DatabaseConnectionError(
+           "Could not create user due to database security policies. If you are inserting a new user, please check Supabase RLS policies."
+        );
+      }
+
+      throw new DatabaseConnectionError(
+        error?.message || "Failed to create user",
+      );
     }
   }
 
   async getUserByUsername(usernameInput: string) {
     const username = validateUsername(usernameInput);
-    const db = getDb();
-
-    let result;
 
     try {
-      result = await db.query<DbUserRow>(
-        `
-          SELECT
-            id,
-            username,
-            display_name,
-            wallet_address,
-            avatar_url,
-            bio,
-            is_verified,
-            total_payments,
-            total_received AS total_volume_usdc,
-            twitter,
-            github,
-            linkedin
-          FROM users
-          WHERE username = $1
-          LIMIT 1
-        `,
-        [username]
+      const { data, error } = await supabase
+        .from("users")
+        .select(
+          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+        )
+        .eq("username", username)
+        .limit(1)
+        .single();
+
+      if (error?.code === "PGRST116") {
+        // No rows found
+        return null;
+      }
+
+      if (error) {
+        throw error;
+      }
+
+      return toPublicUserProfile(data as unknown as DbUserRow);
+    } catch (error: any) {
+      if (error?.code === "PGRST116") {
+        return null;
+      }
+
+      throw new DatabaseConnectionError(
+        error?.message || "Failed to fetch user",
       );
-    } catch (error) {
-      throw normalizeDatabaseError(error);
     }
-
-    if (result.rowCount === 0) {
-      return null;
-    }
-
-    return toPublicUserProfile(result.rows[0]);
   }
 
   async getUserByWalletAddress(walletAddressInput: string) {
     const walletAddress = validateWalletAddress(walletAddressInput);
-    const db = getDb();
-
-    let result;
 
     try {
-      result = await db.query<DbUserRow>(
-        `
-          SELECT
-            id,
-            username,
-            display_name,
-            wallet_address,
-            avatar_url,
-            bio,
-            is_verified,
-            total_payments,
-            total_received AS total_volume_usdc,
-            twitter,
-            github,
-            linkedin
-          FROM users
-          WHERE wallet_address = $1
-          LIMIT 1
-        `,
-        [walletAddress]
+      const { data, error } = await supabase
+        .from("users")
+        .select(
+          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+        )
+        .eq("wallet_address", walletAddress)
+        .limit(1)
+        .single();
+
+      if (error?.code === "PGRST116") {
+        // No rows found
+        return null;
+      }
+
+      if (error) {
+        throw error;
+      }
+
+      return toPublicUserProfile(data as unknown as DbUserRow);
+    } catch (error: any) {
+      if (error?.code === "PGRST116") {
+        return null;
+      }
+
+      throw new DatabaseConnectionError(
+        error?.message || "Failed to fetch user",
       );
-    } catch (error) {
-      throw normalizeDatabaseError(error);
     }
-
-    if (result.rowCount === 0) {
-      return null;
-    }
-
-    return toPublicUserProfile(result.rows[0]);
   }
 
   async isUsernameAvailable(usernameInput: string): Promise<boolean> {
     try {
       const username = validateUsername(usernameInput);
-      const db = getDb();
-      const result = await db.query(
-        "SELECT 1 FROM users WHERE username = $1 LIMIT 1",
-        [username]
-      );
-      return result.rowCount === 0;
-    } catch (error) {
+      const { data, error } = await supabase
+        .from("users")
+        .select("id")
+        .eq("username", username)
+        .limit(1);
+
+      if (error) {
+        throw error;
+      }
+
+      return !data || data.length === 0;
+    } catch (error: any) {
       if (error instanceof UserInputError) {
         return false;
       }
-      throw normalizeDatabaseError(error);
+      throw new DatabaseConnectionError(
+        error?.message || "Failed to check username availability",
+      );
     }
   }
 }

@@ -1,6 +1,6 @@
-import fastify from "fastify";
+import fastify, { FastifyRequest, FastifyReply } from "fastify";
 import dotenv from "dotenv";
-import { assertDatabaseConnection } from "./db/client";
+import { assertDatabaseConnection } from "./db/supabase-client";
 import offrampRoutes from "./routes/offramp.routes";
 import paymentRoutes from "./routes/payments.routes";
 import paylinkRoutes from "./routes/paylinks.routes";
@@ -12,17 +12,20 @@ const server = fastify({ logger: true });
 const port = Number(process.env.PORT || 8001);
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "*";
 
-server.addHook("onRequest", async (request, reply) => {
-  reply.header("Access-Control-Allow-Origin", frontendOrigin);
-  reply.header("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
-  reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+server.addHook(
+  "onRequest",
+  async (request: FastifyRequest, reply: FastifyReply) => {
+    reply.header("Access-Control-Allow-Origin", frontendOrigin);
+    reply.header("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (request.method === "OPTIONS") {
-    return reply.code(204).send();
-  }
-});
+    if (request.method === "OPTIONS") {
+      return reply.code(204).send();
+    }
+  },
+);
 
-server.get("/health", async (request, reply) => {
+server.get("/health", async (request: FastifyRequest, reply: FastifyReply) => {
   return { status: "ok" };
 });
 

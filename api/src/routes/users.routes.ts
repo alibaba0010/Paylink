@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { DatabaseConnectionError } from "../db/client";
+import { DatabaseConnectionError } from "../db/supabase-client";
 import {
   UserConflictError,
   UserInputError,
@@ -56,7 +56,6 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
     try {
       const user = await usersService.getUserByWalletAddress(walletAddress);
-
       if (!user) {
         return reply.code(404).send({
           success: false,

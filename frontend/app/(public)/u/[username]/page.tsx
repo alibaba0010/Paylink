@@ -4,6 +4,7 @@ import { QRCodeDisplay } from '@/components/QRCodeDisplay';
 import { fetchUserProfile } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
 import { CopyValueButton } from '@/components/CopyValueButton';
+import { UserAvatar } from '@/components/UserAvatar';
 import { shortenAddress } from '@/lib/format';
 
 interface Props { params: Promise<{ username: string }> }
@@ -27,11 +28,7 @@ export default async function UserPayPage({ params }: Props) {
           <section className="rounded-[28px] border border-white/10 bg-white/5 p-6 text-center backdrop-blur sm:p-8 lg:text-left">
             <div className="flex flex-col items-center gap-3 text-center lg:items-start lg:text-left">
               <div className="relative">
-                <img
-                  src={profile.avatar_url || '/default-avatar.png'}
-                  alt={profile.display_name}
-                  className="h-20 w-20 rounded-full border-2 border-[#00C896]"
-                />
+                <UserAvatar name={profile.display_name} className="h-20 w-20 text-3xl border-2" />
                 {profile.is_verified && (
                   <span className="absolute -bottom-1 -right-1 rounded-full bg-[#00C896] p-0.5 text-xs">✓</span>
                 )}
