@@ -14,12 +14,23 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const txBase64 = await solanaService.buildDepositTransaction(
-      sender_pubkey,
-      recipient_wallet,
-      amount_usdc,
-      0
-    );
+    const { use_escrow = true } = request.body as any;
+
+    let txBase64: string;
+    if (use_escrow) {
+      txBase64 = await solanaService.buildDepositTransaction(
+        sender_pubkey,
+        recipient_wallet,
+        amount_usdc,
+        0
+      );
+    } else {
+      txBase64 = await solanaService.buildDirectTransferTransaction(
+        sender_pubkey,
+        recipient_wallet,
+        amount_usdc
+      );
+    }
 
     return {
       success: true,

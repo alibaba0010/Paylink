@@ -28,9 +28,13 @@ export function PaymentForm({
   const [memo,   setMemo]   = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [txSig,  setTxSig]  = useState('');
+  const [isCustomWallet, setIsCustomWallet] = useState(false);
+  const [customWallet, setCustomWallet] = useState('');
 
   async function handlePay() {
-    if (!connected || !publicKey || !recipientWallet) return;
+    const finalRecipientWallet = isCustomWallet ? customWallet : recipientWallet;
+    
+    if (!connected || !publicKey || !finalRecipientWallet) return;
 
     const parsedAmount = Number.parseFloat(amount);
 
@@ -44,12 +48,13 @@ export function PaymentForm({
     try {
       // 1. Ask our API to build the unsigned transaction
       const { data } = await api.post('/payments/initiate', {
-        link_id:       linkId,
-        recipient_username: recipientUsername,
-        recipient_wallet: recipientWallet,
+        link_id:       isCustomWallet ? undefined : linkId,
+        recipient_username: isCustomWallet ? 'Wallet Address' : recipientUsername,
+        recipient_wallet: finalRecipientWallet,
         sender_pubkey: publicKey.toString(),
         amount_usdc:   parsedAmount,
         memo,
+        use_escrow:    false, // Switch to direct payment for now
       });
 
       // 2. Deserialize and send to wallet for signing
@@ -64,8 +69,8 @@ export function PaymentForm({
       // 4. Notify our backend so it updates the DB and sends notifications
       await api.post('/payments/confirm', {
         signature: sig,
-        link_id:   linkId,
-        recipient_wallet: recipientWallet,
+        link_id:   isCustomWallet ? undefined : linkId,
+        recipient_wallet: finalRecipientWallet,
       });
 
       setTxSig(sig);
@@ -85,7 +90,8 @@ export function PaymentForm({
     error:      '❌ Failed — try again',
   };
 
-  const isSelfPayment = connected && publicKey?.toBase58() === recipientWallet;
+  const finalRecipientWallet = isCustomWallet ? customWallet : recipientWallet;
+  const isSelfPayment = connected && publicKey?.toBase58() === finalRecipientWallet;
 
   return (
     <div className="flex flex-col gap-4">
@@ -97,56 +103,97 @@ export function PaymentForm({
         </div>
       ) : (
         <>
-          {/* Amount */}
-          {!fixedAmount && (
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8896B3] font-bold">$</span>
+          {/* Recipient Selector Toggle */}
+          {!isCustomWallet ? (
+            <button
+              onClick={() => setIsCustomWallet(true)}
+              className="text-left text-xs text-[#00C896] hover:underline mb-1"
+            >
+              + Send to a different wallet address
+            </button>
+          ) : (
+            <div className="flex flex-col gap-2 mb-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-[#8896B3]">Recipient Wallet Address</label>
+                <button
+                  onClick={() => {
+                    setIsCustomWallet(false);
+                    setCustomWallet('');
+                  }}
+                  className="text-xs text-[#FF5F82] hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
               <input
-                type="number"
-                min="1"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="0.00"
+                type="text"
+                value={customWallet}
+                onChange={(e) => setCustomWallet(e.target.value)}
+                placeholder="Enter Solana wallet address"
                 className="w-full bg-[#0A0F1E] border border-[#1A2235] rounded-xl
-                           pl-8 pr-16 py-3 text-white text-lg focus:border-[#00C896]
+                           px-4 py-3 text-sm text-white focus:border-[#00C896]
                            focus:outline-none transition-colors"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8896B3] text-sm">USDC</span>
             </div>
           )}
 
-          {/* Memo */}
-          <input
-            type="text"
-            value={memo}
-            onChange={e => setMemo(e.target.value)}
-            placeholder="What is this for? (optional)"
-            className="w-full bg-[#0A0F1E] border border-[#1A2235] rounded-xl
-                       px-4 py-3 text-sm text-white sm:text-base focus:border-[#00C896]
-                       focus:outline-none transition-colors"
-          />
+          {/* Amount, Memo, and Pay Button — only show if we have a recipient */}
+          {(isCustomWallet || !!recipientWallet) && (
+            <div className="mt-4 flex flex-col gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              {/* Amount */}
+              {!fixedAmount && (
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8896B3] font-bold">$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-[#0A0F1E] border border-[#1A2235] rounded-xl
+                               pl-8 pr-16 py-3 text-white text-lg focus:border-[#00C896]
+                               focus:outline-none transition-colors"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8896B3] text-sm">USDC</span>
+                </div>
+              )}
 
-          {/* Pay Button */}
-          <button
-            onClick={handlePay}
-            disabled={(status !== 'idle' && status !== 'error') || !recipientWallet}
-            className="w-full bg-[#00C896] text-[#0A0F1E] font-bold py-4
-                       rounded-xl text-base sm:text-lg hover:bg-[#00B085] transition-colors
-                       disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {buttonLabel[status]}
-          </button>
+              {/* Memo */}
+              <input
+                type="text"
+                value={memo}
+                onChange={e => setMemo(e.target.value)}
+                placeholder="What is this for? (optional)"
+                className="w-full bg-[#0A0F1E] border border-[#1A2235] rounded-xl
+                           px-4 py-3 text-sm text-white sm:text-base focus:border-[#00C896]
+                           focus:outline-none transition-colors"
+              />
+
+              {/* Pay Button */}
+              <button
+                onClick={handlePay}
+                disabled={(status !== 'idle' && status !== 'error') || !finalRecipientWallet}
+                className="w-full bg-[#00C896] text-[#0A0F1E] font-bold py-4
+                           rounded-xl text-base sm:text-lg hover:bg-[#00B085] transition-colors
+                           disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {buttonLabel[status]}
+              </button>
+            </div>
+          )}
 
           {/* Success — show explorer link */}
           {status === 'done' && txSig && (
-            <a
-              href={`https://solscan.io/tx/${txSig}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-center text-[#00C896] text-sm hover:underline"
-            >
-              View on Solscan ↗
-            </a>
+            <div className="mt-4 text-center">
+              <a
+                href={`https://solscan.io/tx/${txSig}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#00C896] text-sm hover:underline"
+              >
+                View on Solscan ↗
+              </a>
+            </div>
           )}
         </>
       )}

@@ -146,8 +146,16 @@ export default function PayrollPage() {
             <p className="mt-3 text-sm text-[#8896B3]">{helperText}</p>
           </div>
 
-          {recipient ? (
-            <div className="mt-5 rounded-2xl border border-[#1A2235] bg-[#0A1325] p-5">
+          <div className="mt-6">
+            <PaymentForm
+              recipientUsername={recipient?.username || ''}
+              recipientWallet={recipient?.wallet_address || ''}
+              fixedAmount={null}
+            />
+          </div>
+
+          {recipient && (
+            <div className="mt-5 rounded-2xl border border-[#1A2235] bg-[#0A1325] p-5 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
                   <UserAvatar name={recipient.username} className="h-14 w-14 text-2xl" />
@@ -166,16 +174,8 @@ export default function PayrollPage() {
                   />
                 </div>
               </div>
-
-              <div className="mt-5">
-                <PaymentForm
-                  recipientUsername={recipient.username}
-                  recipientWallet={recipient.wallet_address}
-                  fixedAmount={null}
-                />
-              </div>
             </div>
-          ) : null}
+          )}
         </section>
 
         <section className="flex flex-col gap-6">

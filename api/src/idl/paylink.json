@@ -1,5 +1,5 @@
 {
-  "address": "CsWFkhdvqgVr9oVJXQUogTYTEDNPGmA3gAb1HmsH8AsX",
+  "address": "8HywWiC8jKuPwXuRzhLg82QMmyiyMY2YNBEv2UDB7udf",
   "metadata": {
     "name": "paylink",
     "version": "0.1.0",
@@ -9,19 +9,8 @@
   "instructions": [
     {
       "name": "cancel_payroll",
-      "docs": [
-        "Employer cancels unclaimed payroll — USDC refunded"
-      ],
-      "discriminator": [
-        204,
-        120,
-        222,
-        13,
-        117,
-        113,
-        91,
-        57
-      ],
+      "docs": ["Employer cancels unclaimed payroll — USDC refunded"],
+      "discriminator": [204, 120, 222, 13, 117, 113, 91, 57],
       "accounts": [
         {
           "name": "escrow",
@@ -30,14 +19,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
+                "value": [101, 115, 99, 114, 111, 119]
               },
               {
                 "kind": "account",
@@ -63,13 +45,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -91,19 +67,8 @@
     },
     {
       "name": "claim_payment",
-      "docs": [
-        "Worker claims their payment from escrow"
-      ],
-      "discriminator": [
-        69,
-        112,
-        250,
-        167,
-        37,
-        156,
-        200,
-        30
-      ],
+      "docs": ["Worker claims their payment from escrow"],
+      "discriminator": [69, 112, 250, 167, 37, 156, 200, 30],
       "accounts": [
         {
           "name": "escrow",
@@ -112,14 +77,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
+                "value": [101, 115, 99, 114, 111, 119]
               },
               {
                 "kind": "account",
@@ -145,13 +103,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -173,19 +125,8 @@
     },
     {
       "name": "create_payment_link",
-      "docs": [
-        "Create a new payment link PDA"
-      ],
-      "discriminator": [
-        63,
-        160,
-        253,
-        85,
-        190,
-        156,
-        32,
-        55
-      ],
+      "docs": ["Create a new payment link PDA"],
+      "discriminator": [63, 160, 253, 85, 190, 156, 32, 55],
       "accounts": [
         {
           "name": "payment_link",
@@ -194,15 +135,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  121,
-                  108,
-                  105,
-                  110,
-                  107
-                ]
+                "value": [112, 97, 121, 108, 105, 110, 107]
               },
               {
                 "kind": "account",
@@ -246,19 +179,8 @@
     },
     {
       "name": "deposit_escrow",
-      "docs": [
-        "Employer deposits USDC into escrow for a worker"
-      ],
-      "discriminator": [
-        226,
-        112,
-        158,
-        176,
-        178,
-        118,
-        153,
-        128
-      ],
+      "docs": ["Employer deposits USDC into escrow for a worker"],
+      "discriminator": [226, 112, 158, 176, 178, 118, 153, 128],
       "accounts": [
         {
           "name": "escrow",
@@ -267,14 +189,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
+                "value": [101, 115, 99, 114, 111, 119]
               },
               {
                 "kind": "account",
@@ -303,13 +218,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -356,57 +265,21 @@
   "accounts": [
     {
       "name": "EscrowAccount",
-      "discriminator": [
-        36,
-        69,
-        48,
-        18,
-        128,
-        225,
-        125,
-        135
-      ]
+      "discriminator": [36, 69, 48, 18, 128, 225, 125, 135]
     },
     {
       "name": "PaymentLink",
-      "discriminator": [
-        169,
-        247,
-        147,
-        189,
-        39,
-        239,
-        14,
-        38
-      ]
+      "discriminator": [169, 247, 147, 189, 39, 239, 14, 38]
     }
   ],
   "events": [
     {
       "name": "PaymentClaimed",
-      "discriminator": [
-        238,
-        86,
-        136,
-        254,
-        229,
-        217,
-        63,
-        80
-      ]
+      "discriminator": [238, 86, 136, 254, 229, 217, 63, 80]
     },
     {
       "name": "PaymentDeposited",
-      "discriminator": [
-        14,
-        197,
-        147,
-        66,
-        169,
-        51,
-        217,
-        202
-      ]
+      "discriminator": [14, 197, 147, 66, 169, 51, 217, 202]
     }
   ],
   "errors": [

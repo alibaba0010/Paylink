@@ -177,6 +177,19 @@ export function Navbar() {
               >
                 Change Wallet
               </button>
+
+              {publicKey && (
+                <a
+                  href={`https://solscan.io/account/${publicKey.toBase58()}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsDropdownOpen(false)}
+                  className="flex w-full items-center rounded-xl px-4 py-2.5 text-sm text-[#D6DEEE] transition hover:bg-white/5 hover:text-[#00C896]"
+                >
+                  Show in Explorer
+                  <span className="ml-auto text-[#6D82A8]">↗</span>
+                </a>
+              )}
               
               <button
                 onClick={() => {

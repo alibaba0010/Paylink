@@ -3,7 +3,7 @@ import {
 } from '@solana/web3.js';
 import { Program, AnchorProvider, BN } from '@coral-xyz/anchor';
 import {
-  getAssociatedTokenAddress, TOKEN_PROGRAM_ID
+  getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createTransferInstruction, createAssociatedTokenAccountInstruction
 } from '@solana/spl-token';
 import idl from '../idl/paylink.json';
 type PayLink = any;
@@ -83,6 +83,57 @@ export class SolanaService {
     tx.feePayer        = employer;
 
     // Serialize without requiring all signatures (employer signs in browser)
+    return Buffer.from(
+      tx.serialize({ requireAllSignatures: false })
+    ).toString('base64');
+  }
+
+  /**
+   * Build a direct USDC transfer transaction (no escrow).
+   */
+  async buildDirectTransferTransaction(
+    senderPubkey:    string,
+    recipientPubkey: string,
+    amountUSDC:      number,
+  ): Promise<string> {
+    const sender    = new PublicKey(senderPubkey);
+    const recipient = new PublicKey(recipientPubkey);
+    const amount    = BigInt(Math.round(amountUSDC * 1_000_000));
+
+    const senderATA    = await getAssociatedTokenAddress(this.USDC_MINT, sender);
+    const recipientATA = await getAssociatedTokenAddress(this.USDC_MINT, recipient);
+
+    const tx = new Transaction();
+
+    // 1. Check if recipient ATA exists
+    const recipientInfo = await this.connection.getAccountInfo(recipientATA);
+    if (!recipientInfo) {
+      tx.add(
+        createAssociatedTokenAccountInstruction(
+          sender,       // payer
+          recipientATA, // ata
+          recipient,    // owner
+          this.USDC_MINT
+        )
+      );
+    }
+
+    // 2. Add the transfer instruction
+    tx.add(
+      createTransferInstruction(
+        senderATA,
+        recipientATA,
+        sender,
+        amount,
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+
+    const { blockhash } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer        = sender;
+
     return Buffer.from(
       tx.serialize({ requireAllSignatures: false })
     ).toString('base64');
