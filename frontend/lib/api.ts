@@ -17,7 +17,7 @@ export interface UserProfile {
   linkedin: string | null;
 }
 
-export type PayrollFrequency = 'weekly' | 'biweekly' | 'monthly';
+export type PayrollFrequency = "weekly" | "biweekly" | "monthly";
 
 export interface PayrollMember {
   id: string;
@@ -35,11 +35,11 @@ export interface PayrollMember {
 export interface Payroll {
   id: string;
   employer_id: string;
+  worker_id: string | null; // NULL for groups
   title: string;
-  frequency: PayrollFrequency | null;
-  next_run_at: string | null;
   notification_email: string | null;
   is_active: boolean;
+  memo: string | null;
   member_count: number;
   total_usdc: number;
   members: PayrollMember[];
@@ -121,16 +121,58 @@ export async function createPayroll(payload: {
 }
 
 export async function fetchPayrolls(employer_wallet: string) {
-  const { data } = await api.get<{ success: boolean; payrolls: Payroll[] }>(
-    `/payroll`,
-    { params: { employer_wallet } },
-  );
-  return data.payrolls;
+  const { data } = await api.get<{
+    success: boolean;
+    payroll_schedules: Payroll[];
+  }>(`/payroll`, { params: { employer_wallet } });
+  return data.payroll_schedules;
 }
 
-export async function deactivatePayroll(payrollId: string, employer_wallet: string) {
+export async function deactivatePayroll(
+  payrollId: string,
+  employer_wallet: string,
+) {
   const { data } = await api.patch<{ success: boolean }>(
     `/payroll/${payrollId}/deactivate`,
+    { employer_wallet },
+  );
+  return data.success;
+}
+
+export async function updatePayroll(
+  payrollId: string,
+  payload: {
+    employer_wallet: string;
+    title: string;
+    notification_email?: string;
+    members: CreatePayrollMemberPayload[];
+  },
+) {
+  const { data } = await api.put<{ success: boolean; payroll: Payroll }>(
+    `/payroll/${payrollId}`,
+    payload,
+  );
+  return data.payroll;
+}
+
+export async function schedulePayroll(
+  payrollId: string,
+  employer_wallet: string,
+  frequency: PayrollFrequency,
+) {
+  const { data } = await api.patch<{ success: boolean }>(
+    `/payroll/${payrollId}/schedule`,
+    { employer_wallet, frequency },
+  );
+  return data.success;
+}
+
+export async function executePayroll(
+  payrollId: string,
+  employer_wallet: string,
+) {
+  const { data } = await api.post<{ success: boolean }>(
+    `/payroll/${payrollId}/execute`,
     { employer_wallet },
   );
   return data.success;
@@ -156,15 +198,20 @@ export interface PaymentLink {
   created_at: string;
 }
 
-export async function fetchPaymentLinks(wallet: string, includeArchived = false) {
-  const { data } = await api.get<PaymentLink[]>('/paylinks', {
-    params: { wallet, includeArchived }
+export async function fetchPaymentLinks(
+  wallet: string,
+  includeArchived = false,
+) {
+  const { data } = await api.get<PaymentLink[]>("/paylinks", {
+    params: { wallet, includeArchived },
   });
   return data;
 }
 
 export async function fetchPaymentLinkBySlug(slug: string) {
-  const { data } = await api.get<PaymentLink & { owner: UserProfile }>(`/paylinks/${slug}`);
+  const { data } = await api.get<PaymentLink & { owner: UserProfile }>(
+    `/paylinks/${slug}`,
+  );
   return data;
 }
 
@@ -176,12 +223,15 @@ export async function createPaymentLink(payload: {
   memo?: string;
   link_type?: string;
 }) {
-  const { data } = await api.post<PaymentLink>('/paylinks', payload);
+  const { data } = await api.post<PaymentLink>("/paylinks", payload);
   return data;
 }
 
 export async function archivePaymentLink(id: string, wallet: string) {
-  const { data } = await api.patch<{ success: boolean }>(`/paylinks/${id}/archive`, { wallet });
+  const { data } = await api.patch<{ success: boolean }>(
+    `/paylinks/${id}/archive`,
+    { wallet },
+  );
   return data.success;
 }
 

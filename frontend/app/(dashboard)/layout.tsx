@@ -14,6 +14,7 @@ export default function DashboardLayout({
         <nav className="mt-4 flex flex-col gap-2">
           <Link href="/overview" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">Overview</Link>
           <Link href="/paylinks" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">PayLinks</Link>
+          <Link href="/payments" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">Payments</Link>
           <Link href="/payroll" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">Payroll</Link>
           <Link href="/history" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">History</Link>
           <Link href="/offramp" className="rounded-lg px-4 py-3 text-[#8896B3] transition-colors hover:bg-[#1A2235] hover:text-[#00C896]">Off-Ramp</Link>
@@ -36,6 +37,7 @@ export default function DashboardLayout({
             <nav className="flex gap-2 overflow-x-auto pb-1 text-sm">
               <Link href="/overview" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">Overview</Link>
               <Link href="/paylinks" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">PayLinks</Link>
+              <Link href="/payments" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">Payments</Link>
               <Link href="/payroll" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">Payroll</Link>
               <Link href="/history" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">History</Link>
               <Link href="/offramp" className="whitespace-nowrap rounded-full border border-[#1A2235] px-4 py-2 text-[#8896B3]">Off-Ramp</Link>

@@ -5,6 +5,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
 import { api } from '@/lib/api';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
+import { ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
 type Status = 'idle' | 'building' | 'signing' | 'confirming' | 'done' | 'error';
 
@@ -189,15 +190,21 @@ export function PaymentForm({
 
           {/* Success — show explorer link */}
           {status === 'done' && txSig && (
-            <div className="mt-4 text-center">
-              <a
-                href={`https://solscan.io/tx/${txSig}?cluster=devnet`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#00C896] text-sm hover:underline"
-              >
-                View on Solscan ↗
-              </a>
+            <div className="mt-6 flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
+              <div className="h-16 w-16 rounded-full bg-[#00C896]/10 flex items-center justify-center text-[#00C896]">
+                <CheckCircle2 size={40} />
+              </div>
+              <div className="text-center">
+                <p className="text-white font-black uppercase tracking-widest text-sm">Payment Successful</p>
+                <a
+                  href={`https://solscan.io/tx/${txSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 flex items-center justify-center gap-2 text-[#8896B3] text-xs hover:text-[#00C896] transition-colors group"
+                >
+                  View on Solscan <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </a>
+              </div>
             </div>
           )}
         </>

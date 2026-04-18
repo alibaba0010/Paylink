@@ -2,7 +2,7 @@
 -- Run in Supabase SQL editor AFTER migration 002
 
 -- ── Payroll groups (one per employer per payroll run) ─────────────────────────
-CREATE TABLE IF NOT EXISTS payrolls (
+CREATE TABLE IF NOT EXISTS payroll_schedules (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   employer_id        UUID REFERENCES users(id) ON DELETE CASCADE,
   title              TEXT NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS payrolls (
 -- ── Individual members inside a payroll group ─────────────────────────────────
 CREATE TABLE IF NOT EXISTS payroll_members (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  payroll_id     UUID REFERENCES payrolls(id) ON DELETE CASCADE,
+  payroll_id     UUID REFERENCES payroll_schedules(id) ON DELETE CASCADE,
   worker_id      UUID REFERENCES users(id),  -- NULL when wallet-only (no PayLink account)
   wallet_address TEXT NOT NULL,              -- always stored (resolved or supplied directly)
   label          TEXT,                       -- display label for wallet-only rows
@@ -27,6 +27,6 @@ CREATE TABLE IF NOT EXISTS payroll_members (
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_payrolls_employer    ON payrolls(employer_id);
+CREATE INDEX IF NOT EXISTS idx_payrolls_employer    ON payroll_schedules(employer_id);
 CREATE INDEX IF NOT EXISTS idx_payroll_members_group ON payroll_members(payroll_id);
 CREATE INDEX IF NOT EXISTS idx_payroll_members_worker ON payroll_members(worker_id);

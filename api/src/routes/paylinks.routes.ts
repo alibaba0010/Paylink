@@ -15,6 +15,7 @@ export default async function paylinkRoutes(fastify: FastifyInstance) {
       const links = await paylinksService.getPaylinksByOwner(wallet, includeArchived === 'true');
       return links;
     } catch (err: any) {
+      console.error('GET /paylinks error:', err);
       return reply.code(500).send({ message: err.message });
     }
   });
@@ -29,6 +30,7 @@ export default async function paylinkRoutes(fastify: FastifyInstance) {
       }
       return link;
     } catch (err: any) {
+      console.error(`GET /paylinks/${slug} error:`, err);
       return reply.code(500).send({ message: err.message });
     }
   });
@@ -44,6 +46,7 @@ export default async function paylinkRoutes(fastify: FastifyInstance) {
       const link = await paylinksService.createPaylink(body);
       return link;
     } catch (err: any) {
+      console.error('POST /paylinks error:', err);
       return reply.code(500).send({ message: err.message });
     }
   });
@@ -61,6 +64,7 @@ export default async function paylinkRoutes(fastify: FastifyInstance) {
       await paylinksService.archivePaylink(id, wallet);
       return { success: true };
     } catch (err: any) {
+      console.error(`PATCH /paylinks/${id}/archive error:`, err);
       return reply.code(500).send({ message: err.message });
     }
   });

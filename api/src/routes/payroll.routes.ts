@@ -1,11 +1,10 @@
-import { FastifyInstance } from 'fastify';
-import { DatabaseConnectionError } from '../db/supabase-client';
-import { PayrollService, PayrollInputError } from '../services/payroll.service';
+import { FastifyInstance } from "fastify";
+import { DatabaseConnectionError } from "../db/supabase-client";
+import { PayrollService, PayrollInputError } from "../services/payroll.service";
 
 const payrollService = new PayrollService();
 
 export default async function payrollRoutes(fastify: FastifyInstance) {
-
   /**
    * POST /payroll
    * Create a named payroll group with multiple members in one shot.
@@ -22,7 +21,7 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
    *   }>
    * }
    */
-  fastify.post('/payroll', async (request, reply) => {
+  fastify.post("/payroll", async (request, reply) => {
     const body = request.body as {
       employer_wallet?: string;
       title?: string;
@@ -41,7 +40,7 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
     if (!employer_wallet || !title || !members?.length) {
       return reply.code(400).send({
         success: false,
-        message: 'employer_wallet, title, and at least one member are required',
+        message: "employer_wallet, title, and at least one member are required",
       });
     }
 
@@ -60,7 +59,7 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
       });
 
       return reply.code(201).send({ success: true, payroll });
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof PayrollInputError) {
         return reply.code(400).send({ success: false, message: error.message });
       }
@@ -73,22 +72,23 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /payroll?employer_wallet=<wallet>
-   * List all active payrolls for an employer, each with members and totals.
+   * List all active payroll_schedules for an employer, each with members and totals.
    */
-  fastify.get('/payroll', async (request, reply) => {
+  fastify.get("/payroll", async (request, reply) => {
     const { employer_wallet } = request.query as { employer_wallet?: string };
 
     if (!employer_wallet) {
       return reply.code(400).send({
         success: false,
-        message: 'employer_wallet query param is required',
+        message: "employer_wallet query param is required",
       });
     }
 
     try {
-      const payrolls = await payrollService.listPayrolls(employer_wallet);
-      return { success: true, payrolls };
-    } catch (error) {
+      const payroll_schedules =
+        await payrollService.listPayrolls(employer_wallet);
+      return { success: true, payroll_schedules };
+    } catch (error: any) {
       if (error instanceof PayrollInputError) {
         return reply.code(400).send({ success: false, message: error.message });
       }
@@ -103,21 +103,137 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
    * PATCH /payroll/:id/deactivate
    * Deactivate an entire payroll group. Body: { employer_wallet }
    */
-  fastify.patch('/payroll/:id/deactivate', async (request, reply) => {
+  fastify.patch("/payroll/:id/deactivate", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { employer_wallet } = request.body as { employer_wallet?: string };
 
     if (!employer_wallet) {
       return reply.code(400).send({
         success: false,
-        message: 'employer_wallet is required',
+        message: "employer_wallet is required",
       });
     }
 
     try {
       await payrollService.deactivatePayroll(id, employer_wallet);
       return { success: true };
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) {
+        return reply.code(400).send({ success: false, message: error.message });
+      }
+      if (error instanceof DatabaseConnectionError) {
+        return reply.code(503).send({ success: false, message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * PUT /payroll/:id
+   * Update an existing payroll group. Body: { employer_wallet, title, notification_email, members }
+   */
+  fastify.put("/payroll/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as {
+      employer_wallet?: string;
+      title?: string;
+      notification_email?: string;
+      members?: {
+        username?: string;
+        wallet_address?: string;
+        label?: string;
+        amount_usdc?: number;
+        memo?: string;
+      }[];
+    };
+
+    const { employer_wallet, title, notification_email, members } = body;
+
+    if (!employer_wallet || !title || !members?.length) {
+      return reply.code(400).send({
+        success: false,
+        message: "employer_wallet, title, and at least one member are required",
+      });
+    }
+
+    try {
+      const payroll = await payrollService.updatePayroll(id, {
+        employer_wallet,
+        title,
+        notification_email,
+        members: members.map((m) => ({
+          username: m.username,
+          wallet_address: m.wallet_address,
+          label: m.label,
+          amount_usdc: Number(m.amount_usdc ?? 0),
+          memo: m.memo,
+        })),
+      });
+
+      return reply.send({ success: true, payroll });
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) {
+        return reply.code(400).send({ success: false, message: error.message });
+      }
+      if (error instanceof DatabaseConnectionError) {
+        return reply.code(503).send({ success: false, message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * PATCH /payroll/:id/schedule
+   * Update the frequency and schedule for a payroll group.
+   * Body: { employer_wallet, frequency: 'weekly' | 'biweekly' | 'monthly' }
+   */
+  fastify.patch("/payroll/:id/schedule", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { employer_wallet, frequency } = request.body as {
+      employer_wallet?: string;
+      frequency?: "weekly" | "biweekly" | "monthly";
+    };
+
+    if (!employer_wallet || !frequency) {
+      return reply.code(400).send({
+        success: false,
+        message: "employer_wallet and frequency are required",
+      });
+    }
+
+    try {
+      await payrollService.schedulePayroll(id, employer_wallet, frequency);
+      return { success: true };
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) {
+        return reply.code(400).send({ success: false, message: error.message });
+      }
+      if (error instanceof DatabaseConnectionError) {
+        return reply.code(503).send({ success: false, message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * POST /payroll/:id/execute
+   * Trigger immediate group payment. Body: { employer_wallet }
+   */
+  fastify.post("/payroll/:id/execute", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { employer_wallet } = request.body as { employer_wallet?: string };
+
+    if (!employer_wallet) {
+      return reply.code(400).send({
+        success: false,
+        message: "employer_wallet is required",
+      });
+    }
+
+    try {
+      await payrollService.executePayroll(id, employer_wallet);
+      return { success: true };
+    } catch (error: any) {
       if (error instanceof PayrollInputError) {
         return reply.code(400).send({ success: false, message: error.message });
       }

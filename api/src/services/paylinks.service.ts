@@ -68,23 +68,24 @@ export class PaylinksService {
     const user = await this.usersService.getUserByWalletAddress(wallet);
     if (!user) return [];
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("payment_links")
       .select("*")
       .eq("owner_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (!includeArchived) {
-      query = query.eq("is_archived", false);
-    }
-
-    const { data, error } = await query;
-
     if (error) {
       throw new DatabaseConnectionError(error.message);
     }
 
-    return data as PaymentLink[];
+    let links = data as PaymentLink[];
+    
+    // Filter in-memory to be resilient to missing columns during migration phase
+    if (!includeArchived) {
+      links = links.filter(link => (link as any).is_archived !== true);
+    }
+
+    return links;
   }
 
   async getPaylinkBySlug(slug: string) {
