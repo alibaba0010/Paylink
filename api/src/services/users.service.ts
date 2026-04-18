@@ -7,6 +7,7 @@ export interface PublicUserProfile {
   display_name: string;
   wallet_address: string;
   avatar_url: string | null;
+  icon_key: string;
   bio: string | null;
   is_verified: boolean;
   total_payments: number;
@@ -20,6 +21,7 @@ export interface PublicUserProfile {
 interface OnboardInput {
   username: string;
   walletAddress: string;
+  icon_key?: string;
 }
 
 interface DbUserRow {
@@ -28,6 +30,7 @@ interface DbUserRow {
   display_name: string;
   wallet_address: string;
   avatar_url: string | null;
+  icon_key: string | null;
   bio: string | null;
   is_verified: boolean;
   total_payments: number;
@@ -73,6 +76,7 @@ function toPublicUserProfile(row: DbUserRow): PublicUserProfile {
     display_name: row.display_name,
     wallet_address: row.wallet_address,
     avatar_url: row.avatar_url,
+    icon_key: row.icon_key ?? 'zap',
     bio: row.bio,
     is_verified: row.is_verified,
     total_payments: row.total_payments,
@@ -111,9 +115,10 @@ export class UsersService {
           display_name: username,
           wallet_address: walletAddress,
           avatar_url: avatarUrl,
+          icon_key: input.icon_key ?? 'zap',
         })
         .select(
-          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+          "id, username, display_name, wallet_address, avatar_url, icon_key, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
         )
         .single();
 
@@ -151,7 +156,7 @@ export class UsersService {
       const { data, error } = await supabase
         .from("users")
         .select(
-          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+          "id, username, display_name, wallet_address, avatar_url, icon_key, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
         )
         .eq("username", username)
         .limit(1)
@@ -185,7 +190,7 @@ export class UsersService {
       const { data, error } = await supabase
         .from("users")
         .select(
-          "id, username, display_name, wallet_address, avatar_url, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
+          "id, username, display_name, wallet_address, avatar_url, icon_key, bio, is_verified, total_payments, total_volume_usdc:total_received, twitter, github, linkedin",
         )
         .eq("wallet_address", walletAddress)
         .limit(1)

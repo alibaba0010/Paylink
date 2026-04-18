@@ -10,15 +10,17 @@ const usersService = new UsersService();
 
 export default async function userRoutes(fastify: FastifyInstance) {
   fastify.post("/onboard", async (request, reply) => {
-    const { username, walletAddress } = request.body as {
+    const { username, walletAddress, icon_key } = request.body as {
       username?: string;
       walletAddress?: string;
+      icon_key?: string;
     };
 
     try {
       const user = await usersService.createUser({
         username: username ?? "",
         walletAddress: walletAddress ?? "",
+        icon_key,
       });
 
       return reply.code(201).send({

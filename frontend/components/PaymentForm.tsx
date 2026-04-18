@@ -91,7 +91,12 @@ export function PaymentForm({
   };
 
   const finalRecipientWallet = isCustomWallet ? customWallet : recipientWallet;
-  const isSelfPayment = connected && publicKey?.toBase58() === finalRecipientWallet;
+  
+  // Self-payout check: current user cannot send to their own wallet OR their own username
+  const currentUser = typeof window !== 'undefined' ? (JSON.parse(window.localStorage.getItem('paylink.onboarded-user') || '{}')) : null;
+  const isSelfWallet = connected && publicKey?.toBase58() === finalRecipientWallet;
+  const isSelfUsername = connected && currentUser?.username && recipientUsername === currentUser.username;
+  const isSelfPayment = isSelfWallet || isSelfUsername;
 
   return (
     <div className="flex flex-col gap-4">
@@ -186,7 +191,7 @@ export function PaymentForm({
           {status === 'done' && txSig && (
             <div className="mt-4 text-center">
               <a
-                href={`https://solscan.io/tx/${txSig}`}
+                href={`https://solscan.io/tx/${txSig}?cluster=devnet`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#00C896] text-sm hover:underline"

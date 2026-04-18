@@ -123,7 +123,7 @@ export default function OverviewPage() {
               >
                 <div className="flex flex-col">
                   <a
-                    href={`https://solscan.io/tx/${tx.signature}`}
+                    href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm font-medium text-[#00C896] hover:underline truncate max-w-[200px] sm:max-w-xs"

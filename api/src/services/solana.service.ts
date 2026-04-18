@@ -12,9 +12,9 @@ export class SolanaService {
   private connection: Connection;
   private program: any;
 
-  // USDC mint on Solana Devnet (Official Circle)
+  // USDC mint on Solana Devnet (Provided by User)
   private USDC_MINT = new PublicKey(
-    '4zMMC9srt5Ri5XzYSU7asCcBkMcsAnvMMSivtm96fM1V'
+    '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
   );
 
   constructor() {

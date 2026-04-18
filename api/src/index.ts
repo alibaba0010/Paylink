@@ -5,6 +5,7 @@ import offrampRoutes from "./routes/offramp.routes";
 import paymentRoutes from "./routes/payments.routes";
 import paylinkRoutes from "./routes/paylinks.routes";
 import userRoutes from "./routes/users.routes";
+import payrollRoutes from "./routes/payroll.routes";
 
 dotenv.config();
 
@@ -33,6 +34,7 @@ server.register(userRoutes);
 server.register(paymentRoutes);
 server.register(paylinkRoutes);
 server.register(offrampRoutes);
+server.register(payrollRoutes);
 
 const start = async () => {
   try {

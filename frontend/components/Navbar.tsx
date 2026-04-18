@@ -180,7 +180,7 @@ export function Navbar() {
 
               {publicKey && (
                 <a
-                  href={`https://solscan.io/account/${publicKey.toBase58()}`}
+                  href={`https://solscan.io/account/${publicKey.toBase58()}?cluster=devnet`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setIsDropdownOpen(false)}
