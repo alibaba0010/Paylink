@@ -189,9 +189,10 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
    */
   fastify.patch("/payroll/:id/schedule", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { employer_wallet, frequency } = request.body as {
+    const { employer_wallet, frequency, escrow_tx_sig } = request.body as {
       employer_wallet?: string;
       frequency?: "weekly" | "biweekly" | "monthly";
+      escrow_tx_sig?: string;
     };
 
     if (!employer_wallet || !frequency) {
@@ -202,8 +203,8 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      await payrollService.schedulePayroll(id, employer_wallet, frequency);
-      return { success: true };
+      const cycle = await payrollService.schedulePayroll(id, employer_wallet, frequency, escrow_tx_sig);
+      return { success: true, cycle };
     } catch (error: any) {
       if (error instanceof PayrollInputError) {
         return reply.code(400).send({ success: false, message: error.message });
@@ -211,6 +212,106 @@ export default async function payrollRoutes(fastify: FastifyInstance) {
       if (error instanceof DatabaseConnectionError) {
         return reply.code(503).send({ success: false, message: error.message });
       }
+      throw error;
+    }
+  });
+
+  /**
+   * POST /payroll/cycles/:cycleId/sign
+   * Employer signs off on a payment cycle (within 3-day window).
+   * Body: { employer_wallet, tx_signature }
+   */
+  fastify.post("/payroll/cycles/:cycleId/sign", async (request, reply) => {
+    const { cycleId } = request.params as { cycleId: string };
+    const { employer_wallet, tx_signature } = request.body as { employer_wallet?: string; tx_signature?: string };
+
+    if (!employer_wallet || !tx_signature) {
+      return reply.code(400).send({ success: false, message: "employer_wallet and tx_signature are required" });
+    }
+
+    try {
+      await payrollService.signCycle(cycleId, employer_wallet, tx_signature);
+      return { success: true };
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) return reply.code(400).send({ success: false, message: error.message });
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * POST /payroll/:id/cancel
+   * Employer cancels the payroll and triggers refund.
+   * Body: { employer_wallet, refund_tx_sig? }
+   */
+  fastify.post("/payroll/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { employer_wallet, refund_tx_sig } = request.body as { employer_wallet?: string; refund_tx_sig?: string };
+
+    if (!employer_wallet) {
+      return reply.code(400).send({ success: false, message: "employer_wallet is required" });
+    }
+
+    try {
+      await payrollService.cancelPayroll(id, employer_wallet, refund_tx_sig);
+      return { success: true };
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) return reply.code(400).send({ success: false, message: error.message });
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * GET /payroll/claimable?wallet=<worker_wallet>
+   * Returns claimable payments for a worker.
+   */
+  fastify.get("/payroll/claimable", async (request, reply) => {
+    const { wallet } = request.query as { wallet?: string };
+    if (!wallet) return reply.code(400).send({ success: false, message: "wallet query param is required" });
+
+    try {
+      const claims = await payrollService.getClaimablePayments(wallet);
+      return { success: true, claims };
+    } catch (error: any) {
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * POST /payroll/claims/:claimId/claim
+   * Worker claims a released payment.
+   * Body: { wallet_address, tx_signature }
+   */
+  fastify.post("/payroll/claims/:claimId/claim", async (request, reply) => {
+    const { claimId } = request.params as { claimId: string };
+    const { wallet_address, tx_signature } = request.body as { wallet_address?: string; tx_signature?: string };
+
+    if (!wallet_address || !tx_signature) {
+      return reply.code(400).send({ success: false, message: "wallet_address and tx_signature are required" });
+    }
+
+    try {
+      await payrollService.claimPayment(claimId, wallet_address, tx_signature);
+      return { success: true };
+    } catch (error: any) {
+      if (error instanceof PayrollInputError) return reply.code(400).send({ success: false, message: error.message });
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * POST /payroll/notify
+   * Trigger 3-day pre-payout notifications (called by cron or manually).
+   */
+  fastify.post("/payroll/notify", async (request, reply) => {
+    try {
+      const count = await payrollService.sendPendingNotifications();
+      return { success: true, notified: count };
+    } catch (error: any) {
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
       throw error;
     }
   });

@@ -32,10 +32,24 @@ export interface PayrollMember {
   memo: string | null;
 }
 
+export interface PayrollCycle {
+  id: string;
+  payroll_id: string;
+  cycle_number: number;
+  due_at: string;
+  sign_open_at: string;
+  employer_signed: boolean;
+  signed_at: string | null;
+  tx_signature: string | null;
+  status: 'pending' | 'signed' | 'released' | 'cancelled';
+  notified_at: string | null;
+  created_at: string;
+}
+
 export interface Payroll {
   id: string;
   employer_id: string;
-  worker_id: string | null; // NULL for groups
+  worker_id: string | null;
   title: string;
   notification_email: string | null;
   is_active: boolean;
@@ -43,6 +57,13 @@ export interface Payroll {
   member_count: number;
   total_usdc: number;
   members: PayrollMember[];
+  frequency: PayrollFrequency | null;
+  next_run_at: string | null;
+  escrow_funded: boolean;
+  escrow_amount_usdc: number;
+  escrow_tx_sig: string | null;
+  cancelled_at: string | null;
+  cycles: PayrollCycle[];
   created_at: string;
 }
 
@@ -159,12 +180,13 @@ export async function schedulePayroll(
   payrollId: string,
   employer_wallet: string,
   frequency: PayrollFrequency,
+  escrow_tx_sig?: string,
 ) {
-  const { data } = await api.patch<{ success: boolean }>(
+  const { data } = await api.patch<{ success: boolean; cycle: PayrollCycle }>(
     `/payroll/${payrollId}/schedule`,
-    { employer_wallet, frequency },
+    { employer_wallet, frequency, escrow_tx_sig },
   );
-  return data.success;
+  return data;
 }
 
 export async function executePayroll(
@@ -176,6 +198,99 @@ export async function executePayroll(
     { employer_wallet },
   );
   return data.success;
+}
+
+export async function cancelPayroll(
+  payrollId: string,
+  employer_wallet: string,
+  refund_tx_sig?: string,
+) {
+  const { data } = await api.post<{ success: boolean }>(
+    `/payroll/${payrollId}/cancel`,
+    { employer_wallet, refund_tx_sig },
+  );
+  return data.success;
+}
+
+export async function signPayrollCycle(
+  cycleId: string,
+  employer_wallet: string,
+  tx_signature: string,
+) {
+  const { data } = await api.post<{ success: boolean }>(
+    `/payroll/cycles/${cycleId}/sign`,
+    { employer_wallet, tx_signature },
+  );
+  return data.success;
+}
+
+export async function fetchClaimablePayments(wallet: string) {
+  const { data } = await api.get<{ success: boolean; claims: any[] }>(
+    `/payroll/claimable`,
+    { params: { wallet } },
+  );
+  return data.claims;
+}
+
+export async function claimScheduledPayment(
+  claimId: string,
+  wallet_address: string,
+  tx_signature: string,
+) {
+  const { data } = await api.post<{ success: boolean }>(
+    `/payroll/claims/${claimId}/claim`,
+    { wallet_address, tx_signature },
+  );
+  return data.success;
+}
+
+export async function initiateMultiPayment(payload: {
+  sender_pubkey: string;
+  recipients: { wallet_address: string; amount_usdc: number; label?: string; memo?: string }[];
+}) {
+  const { data } = await api.post<{
+    success: boolean;
+    mode: 'multi';
+    transactions: string[];
+    recipients: { wallet_address: string; label?: string; amount_usdc: number; memo?: string }[];
+  }>('/payments/initiate', payload);
+  return data;
+}
+
+export async function confirmBulkPayment(payload: {
+  sender_wallet: string;
+  memo?: string;
+  recipients: { wallet_address: string; amount_usdc: number; signature: string; label?: string; memo?: string }[];
+}) {
+  const { data } = await api.post<{ success: boolean; payment_id: string; recipient_count: number }>(
+    '/payments/confirm-bulk',
+    payload,
+  );
+  return data;
+}
+
+export interface PaymentHistoryItem {
+  id: string;
+  amount_usdc: number;
+  status: string;
+  created_at: string;
+  tx_signature: string;
+  payment_type: string;
+  recipient_count: number;
+  sender_wallet: string;
+  recipient: {
+    username: string;
+    display_name: string;
+    wallet_address: string;
+    icon_key: string;
+  } | null;
+}
+
+export async function fetchPaymentHistory(wallet: string) {
+  const { data } = await api.get<{ success: boolean; payments: PaymentHistoryItem[] }>('/payments/history', {
+    params: { wallet }
+  });
+  return data.payments;
 }
 
 // ── Payment Links ─────────────────────────────────────────────────────────────

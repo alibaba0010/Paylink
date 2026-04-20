@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { BadgeCheck, Loader2, Mail, Plus, Trash2, Zap, CircleAlert } from 'lucide-react';
-import { createPayroll, updatePayroll, fetchUserProfile, fetchPayrolls, deactivatePayroll, type Payroll, type UserProfile } from '@/lib/api';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { Transaction } from '@solana/web3.js';
+import { BadgeCheck, Loader2, Mail, Plus, Trash2, Zap, CircleAlert, ArrowRightLeft, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { createPayroll, updatePayroll, fetchUserProfile, fetchPayrolls, deactivatePayroll, initiateMultiPayment, confirmBulkPayment, type Payroll, type UserProfile } from '@/lib/api';
 import { IconAvatar } from '@/components/IconPicker';
 import { shortenAddress } from '@/lib/format';
 import { getOnboardedUser } from '@/lib/onboarding-storage';
@@ -171,7 +172,8 @@ function MemberRowCard({ row, onPatch, onRemove, canRemove }: {
 
 export default function PayrollPage() {
   const router = useRouter();
-  const { publicKey } = useWallet();
+  const { publicKey, sendTransaction } = useWallet();
+  const { connection } = useConnection();
   const employerWallet = publicKey?.toBase58() ?? '';
   const currentUser = getOnboardedUser();
 
@@ -179,6 +181,8 @@ export default function PayrollPage() {
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [directPayingId, setDirectPayingId] = useState<string | null>(null);
+  const [directPayResult, setDirectPayResult] = useState<{ payrollId: string; sigs: string[] } | null>(null);
 
   const [title, setTitle] = useState('');
   const [members, setMembers] = useState<MemberRow[]>([newRow()]);
@@ -205,6 +209,51 @@ export default function PayrollPage() {
       setPayrolls(prev => prev.filter(s => s.id !== id));
     } catch { /* silent */ }
     finally { setRemovingId(null); }
+  }
+
+  async function handleDirectPay(p: Payroll) {
+    if (!publicKey || !p.members.length) return;
+    setDirectPayingId(p.id);
+    setDirectPayResult(null);
+    try {
+      const { transactions, recipients: returnedRecipients } = await initiateMultiPayment({
+        sender_pubkey: employerWallet,
+        recipients: p.members.map(m => ({
+          wallet_address: m.wallet_address,
+          amount_usdc: m.amount_usdc,
+          label: m.display_name ?? m.label ?? undefined,
+          memo: m.memo ?? undefined,
+        })),
+      });
+
+      const sigs: string[] = [];
+      for (const tBase64 of transactions) {
+        const tx = Transaction.from(Buffer.from(tBase64, 'base64'));
+        const sig = await sendTransaction(tx, connection);
+        await connection.confirmTransaction(sig, 'confirmed');
+        sigs.push(sig);
+      }
+
+      const CHUNK_SIZE = 10;
+      await confirmBulkPayment({
+        sender_wallet: employerWallet,
+        recipients: returnedRecipients.map((r, i) => {
+          const chunkIndex = Math.floor(i / CHUNK_SIZE);
+          return {
+            wallet_address: r.wallet_address,
+            amount_usdc: r.amount_usdc,
+            signature: sigs[chunkIndex] ?? sigs[0],
+            label: r.label,
+          };
+        }),
+      });
+
+      setDirectPayResult({ payrollId: p.id, sigs });
+    } catch (err: any) {
+      alert(err?.response?.data?.message || 'Direct payment failed');
+    } finally {
+      setDirectPayingId(null);
+    }
   }
 
   const patchMember = useCallback((rowId: string, patch: Partial<MemberRow>) => {
@@ -415,6 +464,24 @@ export default function PayrollPage() {
                       ))}
                       {s.member_count > 2 && (
                         <p className="text-[9px] font-black text-[#4E638A] uppercase tracking-[0.15em] ml-5">+{s.member_count - 2} additional recipients</p>
+                      )}
+                    </div>
+
+                    <div className="mt-6 pt-6 border-t border-white/5">
+                      <button 
+                        onClick={() => handleDirectPay(s)}
+                        disabled={directPayingId === s.id}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#00C896] py-3 text-sm font-black text-[#0A0F1E] hover:bg-[#00E5AC] transition-all disabled:opacity-50"
+                      >
+                        {directPayingId === s.id ? <Loader2 size={16} className="animate-spin" /> : <ArrowRightLeft size={16} />}
+                        <span className="uppercase tracking-widest">Pay Directly</span>
+                      </button>
+                      
+                      {directPayResult?.payrollId === s.id && (
+                        <div className="mt-3 flex items-center justify-center gap-2 text-[10px] font-bold text-[#00C896]">
+                          <CheckCircle2 size={12} />
+                          <span>Bulk payment sent!</span>
+                        </div>
                       )}
                     </div>
                   </div>

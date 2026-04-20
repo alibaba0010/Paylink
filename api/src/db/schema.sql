@@ -45,18 +45,19 @@ CREATE TABLE payment_links (
 
 -- ── Payments (individual transactions) ────────────────────────────────────────
 CREATE TABLE payments (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  link_id        UUID REFERENCES payment_links(id),
-  sender_wallet  TEXT NOT NULL,
-  recipient_id   UUID REFERENCES users(id),
-  amount_usdc    NUMERIC(18,6) NOT NULL,
-  memo           TEXT,
-  tx_signature   TEXT UNIQUE,                  -- Solana transaction signature
-  status         TEXT DEFAULT 'pending',       -- 'pending'|'confirmed'|'claimed'|'failed'
-  created_at     TIMESTAMPTZ DEFAULT NOW(),
-  confirmed_at   TIMESTAMPTZ,
-  frequency      TEXT,                         -- moved from schedules
-  next_run_at    TIMESTAMPTZ                   -- moved from schedules
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  link_id          UUID REFERENCES payment_links(id),
+  sender_wallet    TEXT NOT NULL,
+  recipient_id     UUID REFERENCES users(id),
+  amount_usdc      NUMERIC(18,6) NOT NULL,
+  memo             TEXT,
+  tx_signature     TEXT UNIQUE,
+  status           TEXT DEFAULT 'pending',   -- 'pending'|'confirmed'|'failed'
+  payment_type     TEXT DEFAULT 'single',    -- 'single'|'bulk_direct'|'scheduled'
+  recipient_count  INTEGER DEFAULT 1,
+  payroll_id       UUID,                     -- FK added after payroll_schedules created
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  confirmed_at     TIMESTAMPTZ
 );
 
 -- ── Payroll groups and Individual schedules ──────────────────────────────────
@@ -64,12 +65,20 @@ CREATE TABLE payroll_schedules (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   employer_id        UUID REFERENCES users(id) ON DELETE CASCADE,
   worker_id          UUID REFERENCES users(id) ON DELETE SET NULL, -- NULL for groups
-  amount_usdc        NUMERIC(18,6) DEFAULT 0,                      -- Total for group, or specific for individual
-  is_active          BOOLEAN DEFAULT TRUE,
+  title              TEXT NOT NULL,
+  amount_usdc        NUMERIC(18,6) DEFAULT 0,
   memo               TEXT,
-  created_at         TIMESTAMPTZ DEFAULT NOW(),
   notification_email TEXT,
-  title              TEXT NOT NULL
+  frequency          TEXT,            -- 'weekly' | 'biweekly' | 'monthly' (NULL until scheduled)
+  next_run_at        TIMESTAMPTZ,
+  is_active          BOOLEAN DEFAULT TRUE,
+  -- Escrow tracking
+  escrow_funded      BOOLEAN DEFAULT FALSE,
+  escrow_amount_usdc NUMERIC(18,6) DEFAULT 0,
+  escrow_tx_sig      TEXT,
+  cancelled_at       TIMESTAMPTZ,
+  refund_tx_sig      TEXT,
+  created_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ── Individual members inside a payroll group ─────────────────────────────────
@@ -107,7 +116,7 @@ CREATE TABLE offramp_requests (
 CREATE INDEX idx_payments_recipient    ON payments(recipient_id);
 CREATE INDEX idx_payments_status       ON payments(status);
 CREATE INDEX idx_payrolls_employer     ON payroll_schedules(employer_id);
-CREATE INDEX idx_payroll_next_run      ON payroll_schedules(next_run_at) WHERE is_active = TRUE;
+CREATE INDEX idx_payroll_next_run      ON payroll_schedules(next_run_at) WHERE is_active = TRUE AND next_run_at IS NOT NULL;
 CREATE INDEX idx_payroll_members_group ON payroll_members(payroll_id);
 CREATE INDEX idx_offramp_user          ON offramp_requests(user_id);
 CREATE INDEX idx_payment_links_owner   ON payment_links(owner_id);

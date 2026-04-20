@@ -140,6 +140,65 @@ export class SolanaService {
   }
 
   /**
+   * Build bulk direct USDC transfer transactions (no escrow), chunked by 10 recipients per tx.
+   */
+  async buildBulkDirectTransferTransactions(
+    senderPubkey: string,
+    recipients: { wallet_address: string; amount_usdc: number }[],
+  ): Promise<string[]> {
+    const sender = new PublicKey(senderPubkey);
+    const senderATA = await getAssociatedTokenAddress(this.USDC_MINT, sender);
+    
+    const CHUNK_SIZE = 10;
+    const transactionsBase64: string[] = [];
+
+    for (let i = 0; i < recipients.length; i += CHUNK_SIZE) {
+      const chunk = recipients.slice(i, i + CHUNK_SIZE);
+      const tx = new Transaction();
+
+      // Optimize: we can batch ATA checks or just do them sequentially
+      for (const r of chunk) {
+        const recipient = new PublicKey(r.wallet_address);
+        const amount = BigInt(Math.round(r.amount_usdc * 1_000_000));
+        const recipientATA = await getAssociatedTokenAddress(this.USDC_MINT, recipient);
+        
+        const recipientInfo = await this.connection.getAccountInfo(recipientATA);
+        if (!recipientInfo) {
+          tx.add(
+            createAssociatedTokenAccountInstruction(
+              sender,
+              recipientATA,
+              recipient,
+              this.USDC_MINT
+            )
+          );
+        }
+        
+        tx.add(
+          createTransferInstruction(
+            senderATA,
+            recipientATA,
+            sender,
+            amount,
+            [],
+            TOKEN_PROGRAM_ID
+          )
+        );
+      }
+
+      const { blockhash } = await this.connection.getLatestBlockhash('finalized');
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = sender;
+
+      transactionsBase64.push(
+        Buffer.from(tx.serialize({ requireAllSignatures: false })).toString('base64')
+      );
+    }
+
+    return transactionsBase64;
+  }
+
+  /**
    * Submit a signed transaction from the browser and confirm it.
    */
   async confirmTransaction(signedTxBase64: string): Promise<string> {
