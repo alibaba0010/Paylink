@@ -5,10 +5,11 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
 import {
   BadgeCheck, Loader2, Calendar, History, ArrowRightLeft, Clock,
-  Plus, Trash2, Zap, AlertTriangle, CheckCircle2, X, Lock, Unlock,
+  Plus, Trash2, Zap, AlertTriangle, CheckCircle2, X, Lock, Unlock, ArrowLeft
 } from 'lucide-react';
 import {
   cancelPayroll, signPayrollCycle, initiateMultiPayment, confirmBulkPayment, fetchPaymentHistory,
+  fetchPayrolls, schedulePayroll, fetchUserProfile,
   type Payroll, type PayrollCycle, type UserProfile, type PaymentHistoryItem,
 } from '@/lib/api';
 import { api } from '@/lib/api';
@@ -60,6 +61,13 @@ export default function PaymentsPage() {
 
   const selectedPayroll = schedules.find(p => p.id === selectedId) ?? null;
 
+  // Aggregate global stats for the Payroll tab
+  const activeSchedules = schedules.filter(p => p.frequency);
+  const allPendingCycles = schedules.flatMap(p => 
+    p.cycles?.filter(c => c.status === 'pending' && new Date(c.sign_open_at) <= new Date())
+      .map(c => ({ ...c, payrollTitle: p.title })) ?? []
+  );
+
   // Lookup effect for each recipient
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -90,7 +98,13 @@ export default function PaymentsPage() {
   const loadSchedules = useCallback(async () => {
     if (!wallet) return;
     setIsLoadingSchedules(true);
-    try { setSchedules(await fetchPayrolls(wallet)); } catch { /* silent */ }
+    setErrorMsg(null);
+    try { 
+      const data = await fetchPayrolls(wallet);
+      setSchedules(data); 
+    } catch (err: any) { 
+      setErrorMsg(err?.response?.data?.message || 'Failed to load payroll groups');
+    }
     finally { setIsLoadingSchedules(false); }
   }, [wallet]);
 
@@ -99,7 +113,10 @@ export default function PaymentsPage() {
   const loadHistory = useCallback(async () => {
     if (!wallet) return;
     setIsLoadingHistory(true);
-    try { setHistoryItems(await fetchPaymentHistory(wallet)); } catch { /* silent */ }
+    setErrorMsg(null);
+    try { setHistoryItems(await fetchPaymentHistory(wallet)); } catch { 
+      setErrorMsg('Failed to load payment history');
+    }
     finally { setIsLoadingHistory(false); }
   }, [wallet]);
 
@@ -418,16 +435,71 @@ export default function PaymentsPage() {
         <div className="max-w-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
           <section className="rounded-[32px] border border-[#1A2235] bg-gradient-to-b from-[#0D1B35] to-[#0A0F1E] p-8 shadow-xl shadow-black/20 flex flex-col gap-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#00C896]/15 text-[#00C896]"><Zap size={20} /></div>
+              {selectedId ? (
+                <button 
+                  onClick={() => { setSelectedId(null); setSuccessMsg(null); setErrorMsg(null); }}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-[#8896B3] hover:text-white hover:bg-white/10 transition-all active:scale-95"
+                  title="Back to overview"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#00C896]/15 text-[#00C896]">
+                  <Zap size={20} />
+                </div>
+              )}
               <div>
-                <h2 className="text-2xl font-bold text-white tracking-tight">Schedule Payments</h2>
-                <p className="text-sm text-[#8896B3] mt-0.5">Escrow-backed recurring payouts with 3-day signing window.</p>
+                <h2 className="text-2xl font-bold text-white tracking-tight">
+                  {selectedId ? 'Manage Schedule' : 'Schedule Payments'}
+                </h2>
+                <p className="text-sm text-[#8896B3] mt-0.5">
+                  {selectedId ? `Reviewing cycles for ${selectedPayroll?.title || 'group'}` : 'Escrow-backed recurring payouts with 3-day signing window.'}
+                </p>
               </div>
             </div>
 
+            {/* Global Pending Actions */}
+            {allPendingCycles.length > 0 && (
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col gap-3">
+                <div className="flex items-center gap-2 text-amber-400 font-bold">
+                  <AlertTriangle size={16} /> Action Required — Sign Payment Cycles
+                </div>
+                {allPendingCycles.map(c => (
+                  <div key={c.id} className="flex items-center justify-between bg-[#0A0F1E] rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{c.payrollTitle} — Cycle #{c.cycle_number}</p>
+                      <p className="text-xs text-[#8896B3]">Due: {new Date(c.due_at).toLocaleDateString()}</p>
+                    </div>
+                    <button
+                      onClick={() => handleSignCycle(c as any)}
+                      className="flex items-center gap-2 rounded-xl bg-[#00C896] px-4 py-2 text-sm font-bold text-[#0A0F1E] hover:bg-[#00E5AC] transition-colors"
+                    >
+                      <Unlock size={14} /> Sign & Release
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Global Messages */}
+            {successMsg && (
+              <div className="rounded-2xl bg-[#00C896]/10 border border-[#00C896]/20 p-4 flex items-center gap-3 animate-in fade-in">
+                <BadgeCheck size={18} className="text-[#00C896] shrink-0" />
+                <p className="text-sm font-bold text-[#00C896]">{successMsg}</p>
+              </div>
+            )}
+            {errorMsg && (
+              <div className="rounded-2xl bg-[#FF5F82]/10 border border-[#FF5F82]/20 p-4 flex items-center gap-3 animate-in fade-in">
+                <AlertTriangle size={18} className="text-[#FF5F82] shrink-0" />
+                <p className="text-sm font-bold text-[#FF5F82]">{errorMsg}</p>
+              </div>
+            )}
+
             {/* Select payroll group */}
             <div className="space-y-3">
-              <label className="text-xs font-bold text-white/70 uppercase tracking-wider">Select Payroll Group</label>
+              <label className="text-xs font-bold text-white/70 uppercase tracking-wider">
+                {selectedId ? 'Switch Payroll Group' : 'Select Payroll Group'}
+              </label>
               {isLoadingSchedules ? (
                 <div className="flex items-center gap-2 text-[#8896B3] text-sm"><Loader2 size={16} className="animate-spin" /> Loading…</div>
               ) : (
@@ -443,6 +515,48 @@ export default function PaymentsPage() {
                 </select>
               )}
             </div>
+
+            {/* Active Schedules Overview (when none selected) */}
+            {!selectedId && activeSchedules.length > 0 && (
+              <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-2">
+                <h3 className="text-xs font-bold text-white/70 uppercase tracking-wider">Already Scheduled</h3>
+                <div className="grid gap-3">
+                  {activeSchedules.map(p => (
+                    <div 
+                      key={p.id} 
+                      onClick={() => setSelectedId(p.id)}
+                      className="group rounded-2xl border border-[#1A2235] bg-[#0A0F1E]/60 p-5 flex items-center justify-between hover:border-[#00C896]/40 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-xl bg-[#00C896]/10 flex items-center justify-center text-[#00C896]">
+                          <Calendar size={20} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-white group-hover:text-[#00C896] transition-colors">{p.title}</p>
+                          <p className="text-xs text-[#8896B3] capitalize">{p.frequency} · ${p.total_usdc.toFixed(2)}/cycle</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-[#4E638A] uppercase tracking-widest mb-1">Next Run</p>
+                        <p className="text-sm font-bold text-white">
+                          {p.next_run_at ? new Date(p.next_run_at).toLocaleDateString() : 'Pending'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!selectedId && activeSchedules.length === 0 && !isLoadingSchedules && (
+               <div className="rounded-3xl border border-dashed border-[#1A2235] p-12 flex flex-col items-center text-center">
+                 <div className="h-12 w-12 rounded-full bg-[#1A2235] flex items-center justify-center mb-4 text-[#4E638A]">
+                   <Clock size={24} />
+                 </div>
+                 <h3 className="text-white font-bold">No active schedules</h3>
+                 <p className="text-sm text-[#8896B3] max-w-xs mt-1">Select a group above to activate a recurring payroll schedule.</p>
+               </div>
+            )}
 
             {selectedPayroll && (
               <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -556,19 +670,6 @@ export default function PaymentsPage() {
                     {isCancelling ? <Loader2 className="animate-spin" size={18} /> : <><X size={18} /><span>Cancel & Refund</span></>}
                   </button>
                 </div>
-
-                {successMsg && (
-                  <div className="rounded-2xl bg-[#00C896]/10 border border-[#00C896]/20 p-4 flex items-center gap-3 animate-in fade-in">
-                    <BadgeCheck size={18} className="text-[#00C896] shrink-0" />
-                    <p className="text-sm font-bold text-[#00C896]">{successMsg}</p>
-                  </div>
-                )}
-                {errorMsg && (
-                  <div className="rounded-2xl bg-[#FF5F82]/10 border border-[#FF5F82]/20 p-4 flex items-center gap-3 animate-in fade-in">
-                    <AlertTriangle size={18} className="text-[#FF5F82] shrink-0" />
-                    <p className="text-sm font-bold text-[#FF5F82]">{errorMsg}</p>
-                  </div>
-                )}
               </div>
             )}
           </section>

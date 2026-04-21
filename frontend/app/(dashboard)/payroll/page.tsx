@@ -189,6 +189,7 @@ export default function PayrollPage() {
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
   const [editingPayrollId, setEditingPayrollId] = useState<string | null>(null);
 
   const loadPayrolls = useCallback(async () => {
@@ -250,7 +251,7 @@ export default function PayrollPage() {
 
       setDirectPayResult({ payrollId: p.id, sigs });
     } catch (err: any) {
-      alert(err?.response?.data?.message || 'Direct payment failed');
+      setListError(err?.response?.data?.message || 'Direct payment failed');
     } finally {
       setDirectPayingId(null);
     }
@@ -371,6 +372,15 @@ export default function PayrollPage() {
 
       {view === 'list' ? (
         <section className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+          {listError && (
+            <div className="mb-6 rounded-2xl bg-[#FF5F82]/10 border border-[#FF5F82]/20 p-4 flex items-center justify-between gap-3 animate-in fade-in">
+              <div className="flex items-center gap-3">
+                <AlertTriangle size={18} className="text-[#FF5F82]" />
+                <p className="text-sm font-bold text-[#FF5F82]">{listError}</p>
+              </div>
+              <button onClick={() => setListError('')} className="text-[#8896B3] hover:text-white">✕</button>
+            </div>
+          )}
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
               <Loader2 size={32} className="animate-spin text-[#00C896]" />
