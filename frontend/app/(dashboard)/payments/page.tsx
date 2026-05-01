@@ -2,22 +2,25 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { Transaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+import { SendTransactionError, Transaction } from '@solana/web3.js';
 import {
-  BadgeCheck, Loader2, Calendar, History, ArrowRightLeft, Clock,
-  Plus, Trash2, Zap, AlertTriangle, CheckCircle2, X, Lock, Unlock, ArrowLeft
+  BadgeCheck, ChevronDown, ChevronUp, Loader2, Calendar, History, ArrowRightLeft, Clock,
+  Zap, AlertTriangle, CheckCircle2, X, Lock, ArrowLeft, Download
 } from 'lucide-react';
 import {
-  cancelPayroll, signPayrollCycle, initiateMultiPayment, confirmBulkPayment, fetchPaymentHistory,
-  fetchPayrolls, schedulePayroll, fetchUserProfile,
-  type Payroll, type PayrollCycle, type UserProfile, type PaymentHistoryItem,
+  cancelPayroll, initiateMultiPayment, confirmBulkPayment, fetchPaymentHistory,
+  fetchPayrolls, schedulePayroll, fetchUserProfile, downloadPaymentHistoryCsv,
+  initiatePayrollFunding, confirmPayrollFunding, fetchOutgoingScheduledPayments,
+  rejectScheduledPayment, fetchClaimablePayments,
+  claimPayment, requestGaslessClaim,
+  type Payroll, type UserProfile, type PaymentHistoryItem, type ScheduledPaymentClaim,
 } from '@/lib/api';
-import { api } from '@/lib/api';
 import { IconAvatar } from '@/components/IconPicker';
 import { shortenAddress } from '@/lib/format';
-import { CopyValueButton } from '@/components/CopyValueButton';
+import { useSolanaBalance } from '@/hooks/useSolanaBalance';
 
-type Tab = 'single' | 'payroll' | 'history';
+type Tab = 'single' | 'payroll';
 
 interface Recipient {
   key: string;
@@ -35,9 +38,10 @@ function newRecipient(): Recipient {
 }
 
 export default function PaymentsPage() {
-  const { publicKey, sendTransaction, connected } = useWallet();
+  const { publicKey, sendTransaction, signTransaction, connected } = useWallet();
   const { connection } = useConnection();
   const wallet = publicKey?.toBase58() ?? '';
+  const { data: balance } = useSolanaBalance();
   const [activeTab, setActiveTab] = useState<Tab>('single');
 
   // ── Direct tab ──
@@ -54,19 +58,20 @@ export default function PaymentsPage() {
   const [isScheduling, setIsScheduling] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isBulkPaying, setIsBulkPaying] = useState(false);
+  const [showPayrollMembers, setShowPayrollMembers] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string|null>(null);
   const [errorMsg, setErrorMsg] = useState<string|null>(null);
-  const [historyItems, setHistoryItems] = useState<PaymentHistoryItem[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [claimingClaimId, setClaimingClaimId] = useState<string | null>(null);
+  const [outgoingClaims, setOutgoingClaims] = useState<ScheduledPaymentClaim[]>([]);
+  const [incomingClaims, setIncomingClaims] = useState<ScheduledPaymentClaim[]>([]);
+  const [isLoadingIncoming, setIsLoadingIncoming] = useState(false);
+  const [rejectingClaimId, setRejectingClaimId] = useState<string | null>(null);
 
   const selectedPayroll = schedules.find(p => p.id === selectedId) ?? null;
+  const selectedOutgoingClaims = outgoingClaims.filter(claim => claim.payroll_id === selectedId);
 
   // Aggregate global stats for the Payroll tab
   const activeSchedules = schedules.filter(p => p.frequency);
-  const allPendingCycles = schedules.flatMap(p => 
-    p.cycles?.filter(c => c.status === 'pending' && new Date(c.sign_open_at) <= new Date())
-      .map(c => ({ ...c, payrollTitle: p.title })) ?? []
-  );
 
   // Lookup effect for each recipient
   useEffect(() => {
@@ -95,32 +100,113 @@ export default function PaymentsPage() {
     setRecipients(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   }
 
+  const submitWalletTransaction = useCallback(async (tx: Transaction) => {
+    if (!publicKey) {
+      throw new Error('Wallet not connected');
+    }
+
+    const latest = await connection.getLatestBlockhash('confirmed');
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = latest.blockhash;
+
+    try {
+      if (signTransaction) {
+        const signedTx = await signTransaction(tx);
+        const derivedSigBytes =
+          signedTx.signature ??
+          signedTx.signatures.find(({ publicKey: signer }) => signer.equals(publicKey))?.signature ??
+          signedTx.signatures[0]?.signature ??
+          null;
+
+        const derivedSig = derivedSigBytes ? bs58.encode(derivedSigBytes) : null;
+
+        let sig = derivedSig;
+
+        try {
+          sig = await connection.sendRawTransaction(signedTx.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+            maxRetries: 3,
+          });
+        } catch (err: any) {
+          const alreadyProcessed = String(err?.message || '').includes('already been processed');
+          if (!alreadyProcessed || !derivedSig) {
+            throw err;
+          }
+          sig = derivedSig;
+        }
+
+        if (!sig) {
+          throw new Error('Signed transaction signature could not be derived');
+        }
+
+        await connection.confirmTransaction({
+          signature: sig,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        }, 'confirmed');
+
+        return sig;
+      }
+
+      const sig = await sendTransaction(tx, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3,
+      });
+
+      await connection.confirmTransaction({
+        signature: sig,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      }, 'confirmed');
+
+      return sig;
+    } catch (err: any) {
+      const logs = err instanceof SendTransactionError
+        ? await err.getLogs(connection).catch(() => [])
+        : [];
+      const message =
+        err?.cause?.message ||
+        err?.message ||
+        'Wallet failed to sign and send the transaction';
+
+      console.error('[wallet] transaction submission failed', {
+        name: err?.name,
+        message,
+        cause: err?.cause,
+        logs,
+      });
+
+      throw new Error(message);
+    }
+  }, [connection, publicKey, sendTransaction, signTransaction]);
+
   const loadSchedules = useCallback(async () => {
     if (!wallet) return;
     setIsLoadingSchedules(true);
+    setIsLoadingIncoming(true);
     setErrorMsg(null);
     try { 
-      const data = await fetchPayrolls(wallet);
+      const [data, outgoing, incoming] = await Promise.all([
+        fetchPayrolls(wallet),
+        fetchOutgoingScheduledPayments(wallet),
+        fetchClaimablePayments(wallet),
+      ]);
       setSchedules(data); 
+      setOutgoingClaims(outgoing);
+      setIncomingClaims(incoming);
     } catch (err: any) { 
       setErrorMsg(err?.response?.data?.message || 'Failed to load payroll groups');
     }
-    finally { setIsLoadingSchedules(false); }
+    finally {
+      setIsLoadingSchedules(false);
+      setIsLoadingIncoming(false);
+    }
   }, [wallet]);
 
   useEffect(() => { if (activeTab === 'payroll') void loadSchedules(); }, [activeTab, loadSchedules]);
-
-  const loadHistory = useCallback(async () => {
-    if (!wallet) return;
-    setIsLoadingHistory(true);
-    setErrorMsg(null);
-    try { setHistoryItems(await fetchPaymentHistory(wallet)); } catch { 
-      setErrorMsg('Failed to load payment history');
-    }
-    finally { setIsLoadingHistory(false); }
-  }, [wallet]);
-
-  useEffect(() => { if (activeTab === 'history') void loadHistory(); }, [activeTab, loadHistory]);
+  useEffect(() => { setShowPayrollMembers(false); }, [selectedId]);
 
   // ── Direct payment send ──
   async function handleDirectPay() {
@@ -148,8 +234,7 @@ export default function PaymentsPage() {
       const sigs: string[] = [];
       for (const tBase64 of transactions) {
         const tx = Transaction.from(Buffer.from(tBase64, 'base64'));
-        const sig = await sendTransaction(tx, connection);
-        await connection.confirmTransaction(sig, 'confirmed');
+        const sig = await submitWalletTransaction(tx);
         sigs.push(sig);
       }
 
@@ -182,72 +267,38 @@ export default function PaymentsPage() {
     setErrorMsg(null);
     try {
       const { cycle } = await schedulePayroll(selectedId, wallet, frequency);
-      setSuccessMsg(`Schedule activated! First payout: ${new Date(cycle.due_at).toLocaleDateString()}. Sign window opens ${new Date(cycle.sign_open_at).toLocaleDateString()}.`);
+      setSuccessMsg(`Schedule activated! Next payout cycle begins on ${new Date(cycle.due_at).toLocaleDateString()}.`);
       await loadSchedules();
     } catch (err: any) {
       setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to schedule payroll');
     } finally { setIsScheduling(false); }
   }
 
-  // ── Bulk Direct Pay from Payroll ──
-  async function handleBulkDirectPay() {
-    if (!selectedPayroll || !wallet || !selectedPayroll.members.length) return;
+  // ── Fund Payroll Escrow ──
+  async function handleFundEscrow() {
+    if (!selectedPayroll || !wallet || !publicKey || !connected || !selectedPayroll.members.length) return;
     setIsBulkPaying(true);
     setSuccessMsg(null);
     setErrorMsg(null);
     try {
-      const { transactions, recipients: returnedRecipients } = await initiateMultiPayment({
-        sender_pubkey: wallet,
-        recipients: selectedPayroll.members.map(m => ({
-          wallet_address: m.wallet_address,
-          amount_usdc: m.amount_usdc,
-          label: m.display_name ?? m.label ?? undefined,
-          memo: m.memo ?? undefined,
-        })),
-      });
+      const { transactions, next_run_at } = await initiatePayrollFunding(selectedPayroll.id, wallet);
 
       const sigs: string[] = [];
       for (const tBase64 of transactions) {
         const tx = Transaction.from(Buffer.from(tBase64, 'base64'));
-        const sig = await sendTransaction(tx, connection);
-        await connection.confirmTransaction(sig, 'confirmed');
+        const sig = await submitWalletTransaction(tx);
         sigs.push(sig);
       }
 
-      const CHUNK_SIZE = 10;
-      await confirmBulkPayment({
-        sender_wallet: wallet,
-        recipients: returnedRecipients.map((r, i) => {
-          const chunkIndex = Math.floor(i / CHUNK_SIZE);
-          return {
-            wallet_address: r.wallet_address,
-            amount_usdc: r.amount_usdc,
-            signature: sigs[chunkIndex] ?? sigs[0],
-            label: r.label,
-          };
-        }),
-      });
-
-      setSuccessMsg(`Successfully sent bulk payment to ${selectedPayroll.members.length} members directly.`);
+      const fundedPayroll = await confirmPayrollFunding(selectedPayroll.id, wallet, sigs);
+      setSchedules(prev => prev.map(p => p.id === fundedPayroll.id ? fundedPayroll : p));
+      setSuccessMsg(
+        `Escrow funded for ${selectedPayroll.members.length} members. Next payout cycle opens ${new Date(next_run_at).toLocaleDateString()}.`
+      );
     } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message || err?.message || 'Bulk direct payment failed');
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Escrow funding failed');
     } finally { 
       setIsBulkPaying(false); 
-    }
-  }
-
-  // ── Sign a cycle ──
-  async function handleSignCycle(cycle: PayrollCycle) {
-    if (!wallet) return;
-    try {
-      setErrorMsg(null);
-      setSuccessMsg(null);
-      // Build on-chain escrow-release tx — for now just record with a placeholder sig
-      await signPayrollCycle(cycle.id, wallet, `signed_${Date.now()}`);
-      setSuccessMsg(`Cycle #${cycle.cycle_number} signed! Funds now claimable by recipients.`);
-      await loadSchedules();
-    } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to sign cycle');
     }
   }
 
@@ -268,15 +319,75 @@ export default function PaymentsPage() {
     } finally { setIsCancelling(false); }
   }
 
+  async function handleRejectClaim(claimId: string) {
+    if (!wallet) return;
+    setRejectingClaimId(claimId);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await rejectScheduledPayment(claimId, wallet);
+      setOutgoingClaims(prev => prev.map(claim => claim.id === claimId ? { ...claim, status: 'cancelled' } : claim));
+      setSuccessMsg('Scheduled payment rejected.');
+    } catch (err: any) {
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to reject payment');
+    } finally {
+      setRejectingClaimId(null);
+    }
+  }
+
+  async function handleClaimPayment(claimId: string) {
+    if (!wallet) return;
+    setClaimingClaimId(claimId);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const isGasless = !balance || balance.sol < 0.005;
+      
+      let sig = "";
+      if (isGasless) {
+        const txBase64 = await requestGaslessClaim(claimId, wallet);
+        const tx = Transaction.from(Buffer.from(txBase64, 'base64'));
+        sig = await submitWalletTransaction(tx);
+        await claimPayment(claimId, wallet, sig);
+        setSuccessMsg('Gasless claim successful! ⚡ Fee sponsored by PayLink.');
+      } else {
+        // Fallback to regular gasless claim for now
+        const txBase64 = await requestGaslessClaim(claimId, wallet);
+        const tx = Transaction.from(Buffer.from(txBase64, 'base64'));
+        sig = await submitWalletTransaction(tx);
+        await claimPayment(claimId, wallet, sig);
+        setSuccessMsg('Claim successful!');
+      }
+
+      setIncomingClaims(prev => prev.map(c => c.id === claimId ? { ...c, status: 'claimed' } : c));
+    } catch (err: any) {
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to claim payment');
+    } finally {
+      setClaimingClaimId(null);
+    }
+  }
+
   const canPay = connected && 
                  ((recipient.mode === 'username' && recipient.profile !== null) || 
                   (recipient.mode === 'wallet' && recipient.walletInput.trim().length > 0)) && 
                  Number(recipient.amount) > 0;
   const totalDirect = Number(recipient.amount) || 0;
 
-  const pendingCycles = selectedPayroll?.cycles?.filter(c =>
-    c.status === 'pending' && new Date(c.sign_open_at) <= new Date()
-  ) ?? [];
+  const cycleLockDate = selectedPayroll?.next_run_at ? new Date(selectedPayroll.next_run_at) : null;
+  const isCycleFunded = !!(
+    selectedPayroll &&
+    selectedPayroll.escrow_funded &&
+    cycleLockDate &&
+    cycleLockDate > new Date()
+  );
+  const payrollStatusLabel = !selectedPayroll?.frequency
+    ? 'Not scheduled'
+    : isCycleFunded
+      ? 'Funded'
+      : 'Waiting for payment approval';
+  const payrollStatusTone = isCycleFunded
+    ? 'text-[#00C896]'
+    : 'text-amber-400';
 
   return (
     <div className="flex flex-col gap-8">
@@ -287,7 +398,7 @@ export default function PaymentsPage() {
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-[#0D1B35] rounded-2xl border border-[#1A2235] w-fit">
-        {(['single', 'payroll', 'history'] as Tab[]).map(tab => (
+        {(['single', 'payroll'] as Tab[]).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -299,7 +410,6 @@ export default function PaymentsPage() {
           >
             {tab === 'single' && <ArrowRightLeft size={16} />}
             {tab === 'payroll' && <Calendar size={16} />}
-            {tab === 'history' && <History size={16} />}
             <span className="capitalize">{tab}</span>
           </button>
         ))}
@@ -458,29 +568,6 @@ export default function PaymentsPage() {
               </div>
             </div>
 
-            {/* Global Pending Actions */}
-            {allPendingCycles.length > 0 && (
-              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col gap-3">
-                <div className="flex items-center gap-2 text-amber-400 font-bold">
-                  <AlertTriangle size={16} /> Action Required — Sign Payment Cycles
-                </div>
-                {allPendingCycles.map(c => (
-                  <div key={c.id} className="flex items-center justify-between bg-[#0A0F1E] rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{c.payrollTitle} — Cycle #{c.cycle_number}</p>
-                      <p className="text-xs text-[#8896B3]">Due: {new Date(c.due_at).toLocaleDateString()}</p>
-                    </div>
-                    <button
-                      onClick={() => handleSignCycle(c as any)}
-                      className="flex items-center gap-2 rounded-xl bg-[#00C896] px-4 py-2 text-sm font-bold text-[#0A0F1E] hover:bg-[#00E5AC] transition-colors"
-                    >
-                      <Unlock size={14} /> Sign & Release
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* Global Messages */}
             {successMsg && (
               <div className="rounded-2xl bg-[#00C896]/10 border border-[#00C896]/20 p-4 flex items-center gap-3 animate-in fade-in">
@@ -494,6 +581,66 @@ export default function PaymentsPage() {
                 <p className="text-sm font-bold text-[#FF5F82]">{errorMsg}</p>
               </div>
             )}
+
+            {/* ── Incoming Scheduled Payments (this wallet as recipient) ── */}
+            <div className="rounded-2xl border border-[#00C896]/15 bg-[#00C896]/5 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#00C896]/20 text-[#00C896]">
+                  <Download size={14} />
+                </div>
+                <p className="text-xs font-bold uppercase tracking-wider text-[#00C896]">
+                  Scheduled Incoming Payments
+                </p>
+              </div>
+              {isLoadingIncoming ? (
+                <div className="flex items-center gap-2 text-[#8896B3] text-sm"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+              ) : incomingClaims.length === 0 ? (
+                <p className="text-sm text-[#8896B3]">No scheduled incoming payments yet.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {incomingClaims.map((claim) => {
+                    const title = claim.payroll_schedules?.title || 'Payroll payment';
+                    const unlockDate = new Date(claim.claimable_at);
+                    const isClaimed = claim.status === 'claimed';
+                    const isCancelled = claim.status === 'cancelled';
+                    const statusLabel =
+                      isClaimed ? 'Claimed' :
+                      isCancelled ? 'Rejected' :
+                      claim.can_claim ? 'Ready to claim' :
+                      `Locked until ${unlockDate.toLocaleDateString()}`;
+                    return (
+                      <div key={claim.id} className="flex flex-col gap-2 rounded-xl border border-[#1A2235] bg-[#0A0F1E]/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-semibold text-white text-sm">{title}</p>
+                          <p className="mt-0.5 text-xs text-[#8896B3]">
+                            ${Number(claim.amount_usdc).toFixed(2)} · {statusLabel}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`self-start rounded-full px-2 py-1 text-[10px] font-bold sm:self-auto ${
+                            isClaimed ? 'bg-[#00C896]/20 text-[#00C896]' :
+                            isCancelled ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
+                            claim.can_claim ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-[#1A2235] text-[#8896B3]'
+                          }`}>
+                            {isClaimed ? 'Claimed' : isCancelled ? 'Rejected' : claim.can_claim ? 'Available' : 'Locked'}
+                          </span>
+                          {claim.can_claim && !isClaimed && !isCancelled && (
+                            <button
+                              onClick={() => handleClaimPayment(claim.id)}
+                              disabled={claimingClaimId === claim.id}
+                              className="ml-2 bg-[#00C896] hover:bg-[#00B085] text-[#0A0F1E] font-bold text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {claimingClaimId === claim.id ? <Loader2 size={12} className="animate-spin" /> : 'Claim'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* Select payroll group */}
             <div className="space-y-3">
@@ -537,7 +684,7 @@ export default function PaymentsPage() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-[10px] font-bold text-[#4E638A] uppercase tracking-widest mb-1">Next Run</p>
+                        <p className="text-[10px] font-bold text-[#4E638A] uppercase tracking-widest mb-1">Next Payout</p>
                         <p className="text-sm font-bold text-white">
                           {p.next_run_at ? new Date(p.next_run_at).toLocaleDateString() : 'Pending'}
                         </p>
@@ -565,37 +712,14 @@ export default function PaymentsPage() {
                   {[
                     { label: 'Members', value: selectedPayroll.member_count },
                     { label: 'Total / Cycle', value: `$${selectedPayroll.total_usdc.toFixed(2)}` },
-                    { label: 'Status', value: selectedPayroll.escrow_funded ? '🔒 Funded' : '⚠ Unfunded' },
+                    { label: 'Status', value: payrollStatusLabel },
                   ].map(s => (
                     <div key={s.label} className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-4 text-center">
                       <p className="text-xs text-[#4E638A] uppercase tracking-wider mb-1">{s.label}</p>
-                      <p className="text-lg font-black text-white">{s.value}</p>
+                      <p className={`text-lg font-black ${s.label === 'Status' ? payrollStatusTone : 'text-white'}`}>{s.value}</p>
                     </div>
                   ))}
                 </div>
-
-                {/* Pending sign cycles */}
-                {pendingCycles.length > 0 && (
-                  <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col gap-3">
-                    <div className="flex items-center gap-2 text-amber-400 font-bold">
-                      <AlertTriangle size={16} /> Action Required — Sign Payment Cycles
-                    </div>
-                    {pendingCycles.map(c => (
-                      <div key={c.id} className="flex items-center justify-between bg-[#0A0F1E] rounded-xl px-4 py-3">
-                        <div>
-                          <p className="text-sm font-semibold text-white">Cycle #{c.cycle_number}</p>
-                          <p className="text-xs text-[#8896B3]">Due: {new Date(c.due_at).toLocaleDateString()}</p>
-                        </div>
-                        <button
-                          onClick={() => handleSignCycle(c)}
-                          className="flex items-center gap-2 rounded-xl bg-[#00C896] px-4 py-2 text-sm font-bold text-[#0A0F1E] hover:bg-[#00E5AC] transition-colors"
-                        >
-                          <Unlock size={14} /> Sign & Release
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
 
                 {/* Active cycles overview */}
                 {(selectedPayroll.cycles?.length ?? 0) > 0 && (
@@ -615,6 +739,84 @@ export default function PaymentsPage() {
                     </div>
                   </div>
                 )}
+
+                {selectedOutgoingClaims.length > 0 && (
+                  <div className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-5">
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[#4E638A]">Sent Escrow Payments</p>
+                    <div className="flex flex-col gap-3">
+                      {selectedOutgoingClaims.map((claim) => {
+                        const isClaimed = claim.status === 'claimed';
+                        const isRejected = claim.status === 'cancelled';
+                        return (
+                          <div key={claim.id} className="flex flex-col gap-3 rounded-2xl border border-white/5 bg-black/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm font-bold text-white">${Number(claim.amount_usdc).toFixed(2)} scheduled payment</p>
+                              <p className="mt-1 text-xs text-[#8896B3]">
+                                Recipient {claim.wallet_address ? shortenAddress(claim.wallet_address, 5, 5) : 'wallet'} · unlocks {new Date(claim.claimable_at).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`rounded-full px-2 py-1 text-xs font-bold ${
+                                isClaimed ? 'bg-[#00C896]/20 text-[#00C896]' :
+                                isRejected ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
+                                claim.can_claim ? 'bg-amber-500/20 text-amber-400' :
+                                'bg-[#1A2235] text-[#8896B3]'
+                              }`}>
+                                {isClaimed ? 'claimed' : isRejected ? 'rejected' : claim.can_claim ? 'available' : 'locked'}
+                              </span>
+                              {!isClaimed && !isRejected && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectClaim(claim.id)}
+                                  disabled={rejectingClaimId === claim.id}
+                                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FF5F82]/40 px-3 text-xs font-bold text-[#FF5F82] hover:bg-[#FF5F82]/10 disabled:opacity-40"
+                                >
+                                  {rejectingClaimId === claim.id ? <Loader2 className="animate-spin" size={14} /> : <X size={14} />}
+                                  Reject
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPayrollMembers(prev => !prev)}
+                    className="flex w-full items-center justify-between text-left"
+                  >
+                    <div>
+                      <p className="text-xs font-bold text-[#4E638A] uppercase tracking-wider">Payroll Members</p>
+                      <p className="mt-1 text-sm text-white">
+                        {showPayrollMembers ? 'Hide member breakdown' : `Show ${selectedPayroll.member_count} member${selectedPayroll.member_count === 1 ? '' : 's'}`}
+                      </p>
+                    </div>
+                    {showPayrollMembers ? <ChevronUp size={18} className="text-[#8896B3]" /> : <ChevronDown size={18} className="text-[#8896B3]" />}
+                  </button>
+
+                  {showPayrollMembers && (
+                    <div className="mt-4 flex flex-col gap-3 border-t border-white/5 pt-4">
+                      {selectedPayroll.members.map((member) => (
+                        <div key={member.id} className="flex items-center gap-3 rounded-2xl border border-white/5 bg-black/10 px-4 py-3">
+                          <IconAvatar iconKey={member.icon_key ?? 'zap'} size={12} className="h-9 w-9" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-white">
+                              {member.display_name ?? member.label ?? shortenAddress(member.wallet_address, 4, 4)}
+                            </p>
+                            <p className="truncate text-xs text-[#8896B3]">
+                              {member.username ? `@${member.username}` : shortenAddress(member.wallet_address, 6, 6)}
+                            </p>
+                          </div>
+                          <span className="text-sm font-black text-[#00C896]">${member.amount_usdc.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Frequency selector (only if not yet scheduled) */}
                 {!selectedPayroll.frequency && (
@@ -646,12 +848,18 @@ export default function PaymentsPage() {
                 {/* Action buttons */}
                 <div className="flex flex-col gap-3">
                   <button
-                    onClick={handleBulkDirectPay}
-                    disabled={isBulkPaying || isScheduling}
+                    onClick={handleFundEscrow}
+                    disabled={isBulkPaying || isScheduling || !selectedPayroll.frequency || isCycleFunded}
                     className="flex-1 flex items-center justify-center gap-3 rounded-[20px] bg-[#00C896] py-5 text-sm font-black text-[#0A0F1E] hover:bg-[#00E5AC] active:scale-[0.98] transition-all shadow-xl shadow-[#00C896]/20 disabled:opacity-40"
                   >
-                    {isBulkPaying ? <Loader2 className="animate-spin" size={20} /> : <><Zap size={18} /><span className="uppercase tracking-widest">Pay Instantly (Bulk)</span></>}
+                    {isBulkPaying ? <Loader2 className="animate-spin" size={20} /> : <><Zap size={18} /><span className="uppercase tracking-widest">Pay To Escrow</span></>}
                   </button>
+
+                  {selectedPayroll.frequency && isCycleFunded && selectedPayroll.next_run_at && (
+                    <p className="text-center text-xs text-[#8896B3]">
+                      Escrow is funded for this cycle. Funding unlocks again on {new Date(selectedPayroll.next_run_at).toLocaleDateString()}.
+                    </p>
+                  )}
 
                   {!selectedPayroll.frequency && (
                     <button
@@ -670,53 +878,6 @@ export default function PaymentsPage() {
                     {isCancelling ? <Loader2 className="animate-spin" size={18} /> : <><X size={18} /><span>Cancel & Refund</span></>}
                   </button>
                 </div>
-              </div>
-            )}
-          </section>
-        </div>
-      )}
-
-      {/* ── History Tab ─────────────────────────────────────── */}
-      {activeTab === 'history' && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <section className="rounded-[32px] border border-[#1A2235] bg-gradient-to-b from-[#0D1B35] to-[#0A0F1E] p-8 shadow-xl shadow-black/20">
-            <h2 className="text-2xl font-bold text-white tracking-tight mb-6">Payment History</h2>
-            {isLoadingHistory ? (
-              <div className="flex justify-center p-10"><Loader2 className="animate-spin text-[#00C896]" size={32} /></div>
-            ) : historyItems.length === 0 ? (
-              <div className="rounded-[28px] border border-[#1A2235] bg-[#0D1B35] p-20 flex flex-col items-center justify-center text-center">
-                <div className="h-16 w-16 rounded-full bg-[#1A2235] flex items-center justify-center mb-4">
-                  <Clock size={28} className="text-[#4E638A]" />
-                </div>
-                <h3 className="text-lg font-bold text-white">No payment history</h3>
-                <p className="text-sm text-[#8896B3] max-w-xs mt-1">A full ledger of all your transactions will appear here.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {historyItems.map(item => (
-                  <div key={item.id} className="rounded-2xl border border-[#1A2235] bg-[#0A0F1E] p-4 flex items-center justify-between hover:border-[#2C3B5E] transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${item.sender_wallet === wallet ? 'bg-[#FF5F82]/10 text-[#FF5F82]' : 'bg-[#00C896]/10 text-[#00C896]'}`}>
-                        <Zap size={20} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {item.payment_type === 'bulk_direct' ? `Bulk Payment (${item.recipient_count} recipients)` :
-                           item.sender_wallet === wallet ? 'Sent Payment' : 'Received Payment'}
-                        </p>
-                        <p className="text-xs text-[#8896B3]">{new Date(item.created_at).toLocaleString()}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-lg font-black ${item.sender_wallet === wallet ? 'text-[#FF5F82]' : 'text-[#00C896]'}`}>
-                        {item.sender_wallet === wallet ? '-' : '+'}${item.amount_usdc.toFixed(2)}
-                      </p>
-                      <a href={`https://solscan.io/tx/${item.tx_signature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#4E638A] hover:text-white font-mono transition-colors">
-                        {item.tx_signature.slice(0, 8)}...
-                      </a>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </section>

@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { Transaction } from '@solana/web3.js';
+import { Transaction, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { api } from '@/lib/api';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
 import { ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -28,6 +29,7 @@ export function PaymentForm({
   const [amount, setAmount] = useState(fixedAmount?.toString() || '');
   const [memo,   setMemo]   = useState('');
   const [status, setStatus] = useState<Status>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
   const [txSig,  setTxSig]  = useState('');
   const [isCustomWallet, setIsCustomWallet] = useState(false);
   const [customWallet, setCustomWallet] = useState('');
@@ -40,14 +42,36 @@ export function PaymentForm({
     const parsedAmount = Number.parseFloat(amount);
 
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setErrorMsg("Enter a valid amount");
       setStatus('error');
       return;
     }
 
     setStatus('building');
+    setErrorMsg('');
 
     try {
-      // 1. Ask our API to build the unsigned transaction
+      // 1. Check user balance first
+      const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+      const senderATA = await getAssociatedTokenAddress(USDC_MINT, publicKey);
+      const tokenAccountBalance = await connection.getTokenAccountBalance(senderATA);
+      const uiAmount = tokenAccountBalance.value.uiAmount || 0;
+      if (uiAmount < parsedAmount) {
+        throw new Error(`Insufficient balance. You have ${uiAmount} USDC but need ${parsedAmount} USDC.`);
+      }
+    } catch (e: any) {
+      // If the ATA doesn't exist or other RPC error
+      if (e.message?.includes('could not find account')) {
+        setErrorMsg(`Insufficient balance. You have 0 USDC but need ${parsedAmount} USDC.`);
+      } else {
+        setErrorMsg(e.message || "Failed to check balance");
+      }
+      setStatus('error');
+      return;
+    }
+
+    try {
+      // 2. Ask our API to build the unsigned transaction
       const { data } = await api.post('/payments/initiate', {
         link_id:       isCustomWallet ? undefined : linkId,
         recipient_username: isCustomWallet ? 'Wallet Address' : recipientUsername,
@@ -58,26 +82,34 @@ export function PaymentForm({
         use_escrow:    false, // Switch to direct payment for now
       });
 
-      // 2. Deserialize and send to wallet for signing
+      // 3. Deserialize and send to wallet for signing
       setStatus('signing');
       const tx  = Transaction.from(Buffer.from(data.transaction, 'base64'));
       const sig = await sendTransaction(tx, connection);
 
-      // 3. Wait for Solana confirmation
+      // 4. Wait for Solana confirmation
       setStatus('confirming');
       await connection.confirmTransaction(sig, 'confirmed');
 
-      // 4. Notify our backend so it updates the DB and sends notifications
+      // 5. Notify our backend so it updates the DB and sends notifications
       await api.post('/payments/confirm', {
         signature: sig,
         link_id:   isCustomWallet ? undefined : linkId,
         recipient_wallet: finalRecipientWallet,
+        sender_wallet: publicKey.toString(),
+        amount_usdc: parsedAmount,
+        memo,
       });
 
       setTxSig(sig);
       setStatus('done');
     } catch (err: any) {
       console.error(err);
+      if (err?.message?.includes("User rejected")) {
+        setErrorMsg("User denied transaction signature.");
+      } else {
+        setErrorMsg(err?.message || "Transaction failed");
+      }
       setStatus('error');
     }
   }
@@ -101,6 +133,16 @@ export function PaymentForm({
 
   return (
     <div className="flex flex-col gap-4">
+      {status === 'error' && (
+        <div className="rounded-xl border border-[#FF5F82]/30 bg-[#FF5F82]/10 p-4 text-center text-[#FF5F82] text-sm break-words">
+          <AlertCircle className="inline-block mr-1 mb-0.5" size={16} />
+          {errorMsg}
+          <button onClick={() => setStatus('idle')} className="block mx-auto mt-2 text-xs underline hover:text-white transition-colors">
+            Try again
+          </button>
+        </div>
+      )}
+
       {!connected ? (
         <WalletConnectButton className="!h-12 !w-full !rounded-xl !bg-[#00C896] !font-bold !text-[#0A0F1E]" />
       ) : isSelfPayment ? (

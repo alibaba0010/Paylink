@@ -26,6 +26,9 @@ interface OffRampResult {
 export class OffRampService {
 
   async getRate(): Promise<RateResponse> {
+    if (P2P_API_URL === 'https://example.com' || P2P_API_URL.includes('example')) {
+      return { usdcToNgn: 1450, feePct: 1.5, provider: 'MockProvider' };
+    }
     const res = await axios.get(`${P2P_API_URL}/rates`, {
       params: { from: 'USDC', to: 'NGN' },
       headers: { Authorization: `Bearer ${P2P_API_KEY}` },
@@ -44,6 +47,12 @@ export class OffRampService {
     const netUSDC    = params.amountUSDC - feeAmount;
     const amountNGN  = netUSDC * usdcToNgn;
     const reference  = `PL_${Date.now()}_${params.workerWallet.slice(0, 8)}`;
+
+    if (P2P_API_URL === 'https://example.com' || P2P_API_URL.includes('example')) {
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      return { reference, etaMinutes: 15, amountNGN: Math.floor(amountNGN) };
+    }
 
     const res = await axios.post(
       `${P2P_API_URL}/offramp`,
@@ -66,6 +75,9 @@ export class OffRampService {
   }
 
   async checkStatus(reference: string) {
+    if (P2P_API_URL === 'https://example.com' || P2P_API_URL.includes('example')) {
+      return 'completed';
+    }
     const res = await axios.get(`${P2P_API_URL}/offramp/${reference}`, {
       headers: { Authorization: `Bearer ${P2P_API_KEY}` },
     });

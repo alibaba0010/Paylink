@@ -3,8 +3,8 @@
 import { useCallback, useState } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
-import { BadgeCheck, Loader2, Mail, Plus, Trash2, Zap, CircleAlert, ArrowRightLeft, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { createPayroll, updatePayroll, fetchUserProfile, fetchPayrolls, deactivatePayroll, initiateMultiPayment, confirmBulkPayment, type Payroll, type UserProfile } from '@/lib/api';
+import { BadgeCheck, ChevronDown, ChevronUp, Loader2, Mail, Plus, Trash2, Zap, CircleAlert, ArrowRightLeft, CheckCircle2, AlertTriangle, Download } from 'lucide-react';
+import { createPayroll, updatePayroll, fetchUserProfile, fetchPayrolls, deactivatePayroll, initiateMultiPayment, confirmBulkPayment, downloadPayrollCsv, type Payroll, type UserProfile } from '@/lib/api';
 import { IconAvatar } from '@/components/IconPicker';
 import { shortenAddress } from '@/lib/format';
 import { getOnboardedUser } from '@/lib/onboarding-storage';
@@ -180,9 +180,11 @@ export default function PayrollPage() {
   const [view, setView] = useState<'list' | 'create'>('list');
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [directPayingId, setDirectPayingId] = useState<string | null>(null);
   const [directPayResult, setDirectPayResult] = useState<{ payrollId: string; sigs: string[] } | null>(null);
+  const [expandedPayrolls, setExpandedPayrolls] = useState<Record<string, boolean>>({});
 
   const [title, setTitle] = useState('');
   const [members, setMembers] = useState<MemberRow[]>([newRow()]);
@@ -201,6 +203,29 @@ export default function PayrollPage() {
   }, [employerWallet]);
 
   useEffect(() => { if (view === 'list') void loadPayrolls(); }, [view, loadPayrolls]);
+
+  async function handleExportPayrolls() {
+    if (!employerWallet) return;
+
+    setIsExporting(true);
+    setListError('');
+
+    try {
+      const blob = await downloadPayrollCsv(employerWallet);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `payroll-groups-${employerWallet.slice(0, 8)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setListError(err?.response?.data?.message || 'Failed to export payroll groups');
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   async function handleDeactivate(id: string) {
     if (!employerWallet) return;
@@ -295,6 +320,10 @@ export default function PayrollPage() {
     setView('list');
   }, []);
 
+  const togglePayrollMembers = useCallback((payrollId: string) => {
+    setExpandedPayrolls(prev => ({ ...prev, [payrollId]: !prev[payrollId] }));
+  }, []);
+
   async function handleCreate(email: string | null) {
     setShowEmailModal(false);
     setIsCreating(true);
@@ -355,12 +384,22 @@ export default function PayrollPage() {
         </div>
         <div className="flex items-center gap-3">
           {view === 'list' ? (
-            <button onClick={() => { setEditingPayrollId(null); setTitle(''); setMembers([newRow()]); setView('create'); }} 
-              className="group relative flex items-center gap-2 rounded-xl bg-[#00C896] px-6 py-3.5 text-sm font-black text-[#0A0F1E] hover:bg-[#00E5AC] transition-all shadow-xl shadow-[#00C896]/20 overflow-hidden active:scale-[0.98]">
-              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-              <Plus size={18} className="group-hover:rotate-90 transition-transform duration-300" /> 
-              <span className="uppercase tracking-widest">New Group</span>
-            </button>
+            <>
+              <button
+                onClick={handleExportPayrolls}
+                disabled={isExporting || !employerWallet}
+                className="flex items-center gap-2 rounded-xl border border-[#1A2235] bg-[#0A0F1E] px-4 py-3.5 text-sm font-bold text-white transition-all hover:border-[#2C3B5E] hover:bg-white/5 disabled:opacity-40"
+              >
+                {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                <span>Export CSV</span>
+              </button>
+              <button onClick={() => { setEditingPayrollId(null); setTitle(''); setMembers([newRow()]); setView('create'); }} 
+                className="group relative flex items-center gap-2 rounded-xl bg-[#00C896] px-6 py-3.5 text-sm font-black text-[#0A0F1E] hover:bg-[#00E5AC] transition-all shadow-xl shadow-[#00C896]/20 overflow-hidden active:scale-[0.98]">
+                <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                <Plus size={18} className="group-hover:rotate-90 transition-transform duration-300" /> 
+                <span className="uppercase tracking-widest">New Group</span>
+              </button>
+            </>
           ) : (
             <button onClick={cancelEdit} 
               className="flex items-center gap-2 rounded-xl border border-[#1A2235] bg-[#0A0F1E] px-6 py-3.5 text-sm font-bold text-[#8896B3] hover:text-white hover:border-[#2C3B5E] transition-all uppercase tracking-widest">
@@ -463,17 +502,47 @@ export default function PayrollPage() {
                     </div>
 
                     <div className="space-y-3 pt-4 border-t border-white/5">
-                      {s.members.slice(0, 2).map((m) => (
-                        <div key={m.id} className="flex items-center gap-3">
-                          <div className="h-2 w-2 rounded-full bg-[#00C896]/40" />
-                          <span className="text-[11px] font-bold text-[#D6DEEE] truncate flex-1 tracking-wide">
-                            {m.display_name ?? m.label ?? shortenAddress(m.wallet_address, 4, 4)}
-                          </span>
-                          <span className="text-[11px] font-black text-white tracking-tight">${m.amount_usdc}</span>
+                      <button
+                        type="button"
+                        onClick={() => togglePayrollMembers(s.id)}
+                        className="flex w-full items-center justify-between rounded-2xl border border-white/5 bg-black/10 px-4 py-3 text-left transition-all hover:border-[#00C896]/20 hover:bg-white/5"
+                      >
+                        <div>
+                          <p className="text-[10px] font-black text-[#4E638A] uppercase tracking-[0.2em]">Members</p>
+                          <p className="mt-1 text-xs font-bold text-white">
+                            {expandedPayrolls[s.id] ? 'Hide payroll members' : `Show ${s.member_count} payroll members`}
+                          </p>
                         </div>
-                      ))}
-                      {s.member_count > 2 && (
-                        <p className="text-[9px] font-black text-[#4E638A] uppercase tracking-[0.15em] ml-5">+{s.member_count - 2} additional recipients</p>
+                        {expandedPayrolls[s.id] ? <ChevronUp size={16} className="text-[#8896B3]" /> : <ChevronDown size={16} className="text-[#8896B3]" />}
+                      </button>
+
+                      {expandedPayrolls[s.id] ? (
+                        <div className="space-y-3">
+                          {s.members.map((m) => (
+                            <div key={m.id} className="flex items-center gap-3">
+                              <div className="h-2 w-2 rounded-full bg-[#00C896]/40" />
+                              <span className="text-[11px] font-bold text-[#D6DEEE] truncate flex-1 tracking-wide">
+                                {m.display_name ?? m.label ?? shortenAddress(m.wallet_address, 4, 4)}
+                              </span>
+                              <span className="text-[11px] font-black text-white tracking-tight">${m.amount_usdc}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          {s.members.slice(0, 2).map((m) => (
+                            <div key={m.id} className="flex items-center gap-3">
+                              <div className="h-2 w-2 rounded-full bg-[#00C896]/40" />
+                              <span className="text-[11px] font-bold text-[#D6DEEE] truncate flex-1 tracking-wide">
+                                {m.display_name ?? m.label ?? shortenAddress(m.wallet_address, 4, 4)}
+                              </span>
+                              <span className="text-[11px] font-black text-white tracking-tight">${m.amount_usdc}</span>
+                            </div>
+                          ))}
+                          {s.member_count > 2 && (
+                            <p className="text-[9px] font-black text-[#4E638A] uppercase tracking-[0.15em] ml-5">+{s.member_count - 2} additional recipients</p>
+                          )}
+                        </>
                       )}
                     </div>
 

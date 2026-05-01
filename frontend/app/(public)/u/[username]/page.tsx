@@ -1,11 +1,13 @@
 import { notFound }     from 'next/navigation';
 import { PaymentForm }  from '@/components/PaymentForm';
-import { QRCodeDisplay } from '@/components/QRCodeDisplay';
 import { fetchUserProfile } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
 import { CopyValueButton } from '@/components/CopyValueButton';
 import { UserAvatar } from '@/components/UserAvatar';
 import { shortenAddress } from '@/lib/format';
+import { UserProfileClientTabs } from './UserProfileClientTabs';
+import { fetchReputationScore } from '@/lib/api';
+import { ReputationBadge } from '@/components/ReputationBadge';
 
 interface Props { params: Promise<{ username: string }> }
 
@@ -14,6 +16,8 @@ export default async function UserPayPage({ params }: Props) {
   const { username } = await params;
   const profile = await fetchUserProfile(username);
   if (!profile) return notFound();
+
+  const reputation = await fetchReputationScore(username);
 
   const pageUrl = `https://paylink.app/u/${username}`;
 
@@ -43,6 +47,12 @@ export default async function UserPayPage({ params }: Props) {
                   {profile.bio}
                 </p>
               )}
+
+              {reputation && (
+                <div className="w-full text-left">
+                  <ReputationBadge reputation={reputation} />
+                </div>
+              )}
             </div>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -67,23 +77,11 @@ export default async function UserPayPage({ params }: Props) {
           </section>
 
           <section className="flex flex-col gap-6">
-            <div className="w-full rounded-[28px] border border-[#1A2235] bg-[#0D1B35] p-5 shadow-2xl shadow-black/30 sm:p-6">
-              <h2 className="mb-4 text-center font-semibold text-white">
-                Pay {profile.display_name}
-              </h2>
-              <PaymentForm
-                linkId={profile.default_link_id}
-                recipientUsername={username}
-                recipientWallet={profile.wallet_address}
-                fixedAmount={null}
-              />
-            </div>
-
-            <div className="flex flex-col items-center gap-3 rounded-[28px] border border-[#1A2235] bg-[#0D1B35] p-6 text-center">
-              <p className="text-xs text-[#8896B3]">Scan to pay</p>
-              <QRCodeDisplay url={pageUrl} size={120} />
-              <p className="break-all text-xs font-mono text-[#8896B3]">{pageUrl}</p>
-            </div>
+            <UserProfileClientTabs 
+              profile={profile} 
+              username={username} 
+              pageUrl={pageUrl} 
+            />
           </section>
         </div>
 

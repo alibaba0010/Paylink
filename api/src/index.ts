@@ -6,6 +6,10 @@ import paymentRoutes from "./routes/payments.routes";
 import paylinkRoutes from "./routes/paylinks.routes";
 import userRoutes from "./routes/users.routes";
 import payrollRoutes from "./routes/payroll.routes";
+import invoiceRoutes from "./routes/invoices.routes";
+import crossChainRoutes from "./routes/cross-chain.routes";
+import actionsRoutes from "./routes/actions.routes";
+import reputationRoutes from "./routes/reputation.routes";
 
 dotenv.config();
 
@@ -17,8 +21,8 @@ server.addHook(
   "onRequest",
   async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header("Access-Control-Allow-Origin", frontendOrigin);
-    reply.header("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
-    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,OPTIONS");
+    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-blockchain-ids, x-action-version");
 
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
@@ -35,6 +39,10 @@ server.register(paymentRoutes);
 server.register(paylinkRoutes);
 server.register(offrampRoutes);
 server.register(payrollRoutes);
+server.register(invoiceRoutes);
+server.register(crossChainRoutes);
+server.register(actionsRoutes);
+server.register(reputationRoutes);
 
 const start = async () => {
   try {

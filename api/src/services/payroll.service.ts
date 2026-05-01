@@ -1,6 +1,9 @@
 import { supabase, DatabaseConnectionError } from "../db/supabase-client";
 import { PublicKey } from "@solana/web3.js";
+import { SolanaService } from "./solana.service";
+import { Resend } from "resend";
 
+const resend = new Resend(process.env.RESEND_API_KEY || 're_mock');
 export class PayrollInputError extends Error {
   constructor(message: string) {
     super(message);
@@ -98,12 +101,53 @@ function computeCycleDates(
   const dates: Date[] = [];
   let cursor = new Date(from);
   for (let i = 0; i < count; i++) {
-    if (frequency === "weekly") cursor.setDate(cursor.getDate() + 7);
-    else if (frequency === "biweekly") cursor.setDate(cursor.getDate() + 14);
-    else cursor.setMonth(cursor.getMonth() + 1);
+    cursor = computeNextCycleBoundary(frequency, cursor);
     dates.push(new Date(cursor));
   }
   return dates;
+}
+
+function computeNextCycleBoundary(
+  frequency: PayrollFrequency,
+  from: Date,
+): Date {
+  const cursor = new Date(from);
+
+  if (frequency === "monthly") {
+    return new Date(
+      Date.UTC(
+        cursor.getUTCFullYear(),
+        cursor.getUTCMonth() + 1,
+        1,
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
+  }
+
+  const startOfDay = new Date(
+    Date.UTC(
+      cursor.getUTCFullYear(),
+      cursor.getUTCMonth(),
+      cursor.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+
+  const day = startOfDay.getUTCDay() || 7; // ISO-style: Sunday -> 7
+  const daysUntilNextMonday = 8 - day;
+  startOfDay.setUTCDate(startOfDay.getUTCDate() + daysUntilNextMonday);
+
+  if (frequency === "biweekly") {
+    startOfDay.setUTCDate(startOfDay.getUTCDate() + 7);
+  }
+
+  return startOfDay;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -166,6 +210,8 @@ export class PayrollService {
     const { data: employer } = await supabase
       .from("users").select("id").eq("wallet_address", wallet).single();
     if (!employer) return [];
+
+    await this.syncElapsedCycles(employer.id);
 
     // Try the full query (requires migration 005). If the new columns or
     // the scheduled_payment_cycles table don't exist yet, fall back to the
@@ -284,8 +330,6 @@ export class PayrollService {
     // First due date = one period from now
     const now = new Date();
     const [dueDate] = computeCycleDates(frequency, now, 1);
-    const signOpenAt = new Date(dueDate.getTime() - 3 * 24 * 60 * 60 * 1000); // 3 days before
-
     // Update the schedule
     const { error: updateErr } = await supabase
       .from("payroll_schedules")
@@ -300,44 +344,218 @@ export class PayrollService {
 
     if (updateErr) throw new DatabaseConnectionError(updateErr.message || "Failed to schedule payroll");
 
-    // Create the first cycle
-    const { data: cycle, error: cycleErr } = await supabase
-      .from("scheduled_payment_cycles")
-      .insert({
-        payroll_id: id,
-        cycle_number: 1,
-        due_at: dueDate.toISOString(),
-        sign_open_at: signOpenAt.toISOString(),
-        status: "pending",
-        employer_signed: false,
-      })
-      .select("id, payroll_id, cycle_number, due_at, sign_open_at, employer_signed, signed_at, tx_signature, status, notified_at, created_at")
+    return await this.createCycleWithClaims(id, 1, dueDate);
+  }
+
+  /**
+   * Prepare escrow-funding transactions for the current payroll cycle.
+   * The employer signs these in the browser, then confirms them via fundPayroll.
+   */
+  async preparePayrollFunding(
+    payrollId: string,
+    employerWallet: string,
+  ): Promise<{ transactions: string[]; next_run_at: string }> {
+    const wallet = validateWallet(employerWallet);
+    const { data: employer } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    await this.syncElapsedCycles(employer.id);
+
+    const { data: payroll } = await supabase
+      .from("payroll_schedules")
+      .select("id, employer_id, frequency, next_run_at, escrow_funded, is_active")
+      .eq("id", payrollId)
+      .eq("employer_id", employer.id)
       .single();
 
-    if (cycleErr || !cycle)
-      throw new DatabaseConnectionError(cycleErr?.message || "Failed to create payment cycle");
-
-    // Populate initial claims for each member
-    const { data: members } = await supabase
-      .from("payroll_members")
-      .select("id, worker_id, wallet_address, amount_usdc")
-      .eq("payroll_id", id).eq("is_active", true);
-
-    if (members && members.length > 0) {
-      const claimRows = members.map((m) => ({
-        cycle_id: cycle.id,
-        payroll_id: id,
-        member_id: m.id,
-        worker_id: m.worker_id ?? null,
-        wallet_address: m.wallet_address,
-        amount_usdc: m.amount_usdc,
-        status: "pending",
-        claimable_at: dueDate.toISOString(),
-      }));
-      await supabase.from("scheduled_payment_claims").insert(claimRows);
+    if (!payroll) throw new PayrollInputError("Payroll group not found");
+    if (!payroll.is_active) throw new PayrollInputError("Payroll group is deactivated");
+    if (!payroll.frequency || !payroll.next_run_at) {
+      throw new PayrollInputError("Activate a payment schedule before funding escrow");
     }
 
-    return cycle as PayrollCycle;
+    const nextRunAt = new Date(payroll.next_run_at);
+    if (payroll.escrow_funded && nextRunAt > new Date()) {
+      throw new PayrollInputError(`Escrow is already funded until ${nextRunAt.toISOString()}`);
+    }
+
+    const members = await this.fetchPayrollMembers(payrollId);
+
+    if (!members || members.length === 0) {
+      throw new PayrollInputError("No members in this payroll group");
+    }
+
+    const unlockTime = Math.floor(nextRunAt.getTime() / 1000);
+    const solana = new SolanaService();
+    const transactions = await solana.buildBulkEscrowDepositTransactions(
+      wallet,
+      members.map((member) => ({
+        wallet_address: member.wallet_address,
+        amount_usdc: Number(member.amount_usdc),
+      })),
+      unlockTime,
+    );
+
+    return {
+      transactions,
+      next_run_at: payroll.next_run_at,
+    };
+  }
+
+  /**
+   * Mark the current payroll cycle as funded after the escrow deposit txs land on-chain.
+   */
+  async fundPayroll(
+    payrollId: string,
+    employerWallet: string,
+    txSignatures: string[],
+  ): Promise<Payroll> {
+    const wallet = validateWallet(employerWallet);
+    const { data: employer } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    await this.syncElapsedCycles(employer.id);
+
+    const { data: payroll, error: payrollErr } = await supabase
+      .from("payroll_schedules")
+      .select("id, employer_id, worker_id, title, notification_email, is_active, amount_usdc, memo, escrow_funded, escrow_amount_usdc, escrow_tx_sig, cancelled_at, frequency, next_run_at, created_at")
+      .eq("id", payrollId)
+      .eq("employer_id", employer.id)
+      .single();
+
+    if (payrollErr || !payroll) throw new PayrollInputError("Payroll group not found");
+    if (!payroll.frequency || !payroll.next_run_at) {
+      throw new PayrollInputError("Activate a payment schedule before funding escrow");
+    }
+
+    const nextRunAt = new Date(payroll.next_run_at);
+    if (payroll.escrow_funded && nextRunAt > new Date()) {
+      throw new PayrollInputError(`Escrow is already funded until ${nextRunAt.toISOString()}`);
+    }
+
+    if (!txSignatures.length) {
+      const members = await this.fetchPayrollMembers(payrollId);
+      const solana = new SolanaService();
+      const isFundedOnChain = await solana.verifyBulkEscrowDeposits(
+        wallet,
+        members.map((member) => ({
+          wallet_address: member.wallet_address,
+          amount_usdc: Number(member.amount_usdc),
+        })),
+        Math.floor(nextRunAt.getTime() / 1000),
+      );
+
+      if (!isFundedOnChain) {
+        throw new PayrollInputError("At least one escrow funding transaction signature is required");
+      }
+    }
+
+    const { error: updateErr } = await supabase
+      .from("payroll_schedules")
+      .update({
+        escrow_funded: true,
+        escrow_amount_usdc: Number(payroll.amount_usdc),
+        escrow_tx_sig: txSignatures.length ? txSignatures.join(",") : "verified_existing_escrow",
+      })
+      .eq("id", payrollId)
+      .eq("employer_id", employer.id);
+
+    if (updateErr) {
+      throw new DatabaseConnectionError(updateErr.message || "Failed to mark payroll escrow as funded");
+    }
+
+    const { data: refreshed, error: refreshedErr } = await supabase
+      .from("payroll_schedules")
+      .select(`
+        id, employer_id, worker_id, title, notification_email, is_active,
+        amount_usdc, memo, escrow_funded, escrow_amount_usdc, escrow_tx_sig,
+        cancelled_at, frequency, next_run_at, created_at,
+        payroll_members(id, payroll_id, worker_id, wallet_address, label, amount_usdc, memo),
+        scheduled_payment_cycles(id, payroll_id, cycle_number, due_at, sign_open_at, employer_signed, signed_at, tx_signature, status, notified_at, created_at)
+      `)
+      .eq("id", payrollId)
+      .eq("employer_id", employer.id)
+      .single();
+
+    if (refreshedErr || !refreshed) {
+      throw new DatabaseConnectionError(refreshedErr?.message || "Failed to reload funded payroll");
+    }
+
+    const enrichedMembers = await this.enrichMembers(refreshed.payroll_members || []);
+
+    const employerEmail = refreshed.notification_email; // We don't have the user's email joined here easily, but we have notification_email
+    if (employerEmail && process.env.RESEND_API_KEY) {
+      try {
+        await resend.emails.send({
+          from: 'PayLink <notifications@resend.dev>',
+          to: employerEmail,
+          subject: `PayLink Schedule "${refreshed.title}" Funded`,
+          html: `<p>Your payroll schedule <strong>${refreshed.title}</strong> has been successfully funded in escrow.</p><p>Total amount: $${refreshed.escrow_amount_usdc} USDC.</p>`
+        });
+      } catch (e) {
+        console.error("Failed to send Resend email", e);
+      }
+    }
+
+    return this.toPayroll(refreshed, enrichedMembers, refreshed.scheduled_payment_cycles || []);
+  }
+
+  /**
+   * Prepare the on-chain transactions for signing a cycle.
+   * Returns base64-encoded unsigned transactions for the employer to sign in-browser.
+   */
+  async prepareCycleSign(
+    cycleId: string,
+    employerWallet: string,
+  ): Promise<{ transactions: string[]; recipients: { wallet_address: string; amount_usdc: number; label?: string }[] }> {
+    const wallet = validateWallet(employerWallet);
+    const { data: employer } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    const { data: cycle } = await supabase
+      .from("scheduled_payment_cycles")
+      .select("id, payroll_id, cycle_number, due_at, sign_open_at, status, payroll_schedules(employer_id)")
+      .eq("id", cycleId)
+      .single() as any;
+
+    if (!cycle) throw new PayrollInputError("Cycle not found");
+    if (cycle.payroll_schedules?.employer_id !== employer.id)
+      throw new PayrollInputError("Access denied");
+    if (cycle.status !== "pending")
+      throw new PayrollInputError(`Cycle is already ${cycle.status}`);
+
+    const now = new Date();
+    const signOpenAt = new Date(cycle.sign_open_at);
+    if (now < signOpenAt)
+      throw new PayrollInputError(`Signing window opens on ${signOpenAt.toISOString()}`);
+
+    // Fetch cycle members
+    const members = await this.fetchPayrollMembers(cycle.payroll_id);
+
+    if (!members || members.length === 0)
+      throw new PayrollInputError("No members in this payroll group");
+
+    // Enrich with display names
+    const enriched = await this.enrichMembers(members);
+
+    // Build bulk transfer transactions via SolanaService
+    const solana = new SolanaService();
+    const transactions = await solana.buildBulkDirectTransferTransactions(
+      wallet,
+      members.map((m) => ({ wallet_address: m.wallet_address, amount_usdc: m.amount_usdc })),
+    );
+
+    return {
+      transactions,
+      recipients: enriched.map((m) => ({
+        wallet_address: m.wallet_address,
+        amount_usdc: m.amount_usdc,
+        label: m.display_name ?? m.label ?? undefined,
+      })),
+    };
   }
 
   /**
@@ -379,10 +597,10 @@ export class PayrollService {
       .eq("id", cycleId);
     if (error) throw new DatabaseConnectionError(error.message);
 
-    // Mark claims as claimable
+    // Mark claims as claimable immediately (update claimable_at to now so recipients can claim right away)
     await supabase
       .from("scheduled_payment_claims")
-      .update({ status: "claimable" })
+      .update({ status: "claimable", claimable_at: now.toISOString() })
       .eq("cycle_id", cycleId);
 
     // Create the NEXT cycle automatically
@@ -405,12 +623,9 @@ export class PayrollService {
         .select("id").single();
 
       if (nextCycle) {
-        const { data: members } = await supabase
-          .from("payroll_members")
-          .select("id, worker_id, wallet_address, amount_usdc")
-          .eq("payroll_id", cycle.payroll_id).eq("is_active", true);
+        const members = await this.fetchPayrollMembers(cycle.payroll_id);
 
-        if (members && members.length > 0) {
+        if (members.length > 0) {
           await supabase.from("scheduled_payment_claims").insert(
             members.map((m) => ({
               cycle_id: nextCycle.id,
@@ -494,25 +709,59 @@ export class PayrollService {
   }
 
   /**
-   * Get claimable payments for a recipient (worker).
-   * Returns claims where status = 'claimable' and due_at <= now.
+   * Get scheduled payments for a recipient (worker).
+   * Returns all claims (pending, claimable, claimed) for this wallet address.
+   * NOTE: We do NOT filter by escrow_funded here — that flag is reset each cycle
+   * but claims created when escrow was funded remain valid records in the DB.
    */
   async getClaimablePayments(workerWallet: string): Promise<any[]> {
-    const now = new Date().toISOString();
     const { data, error } = await supabase
       .from("scheduled_payment_claims")
       .select(`
-        id, cycle_id, payroll_id, amount_usdc, status, claimable_at, claimed_at,
+        id, cycle_id, payroll_id, amount_usdc, status, claimable_at, claimed_at, created_at,
         scheduled_payment_cycles(due_at, tx_signature, employer_signed),
-        payroll_schedules(title, employer_id)
+        payroll_schedules(title, employer_id, escrow_funded, escrow_tx_sig)
       `)
       .eq("wallet_address", workerWallet)
-      .eq("status", "claimable")
-      .lte("claimable_at", now)
+      .in("status", ["pending", "claimable", "claimed", "cancelled"])
       .order("claimable_at", { ascending: true });
 
     if (error) throw new DatabaseConnectionError(error.message);
-    return data || [];
+    // Return all claims — including those from cycles where escrow was funded
+    // even if escrow_funded was subsequently reset. This ensures workers can
+    // always see their incoming scheduled payments.
+    return this.decorateScheduledClaims(data || []);
+  }
+
+  async getOutgoingScheduledPayments(employerWallet: string): Promise<any[]> {
+    const wallet = validateWallet(employerWallet);
+    const { data: employer } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    const { data: payrolls, error: payrollErr } = await supabase
+      .from("payroll_schedules")
+      .select("id")
+      .eq("employer_id", employer.id);
+    if (payrollErr) throw new DatabaseConnectionError(payrollErr.message);
+
+    const payrollIds = (payrolls || []).map((payroll) => payroll.id);
+    if (payrollIds.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from("scheduled_payment_claims")
+      .select(`
+        id, cycle_id, payroll_id, wallet_address, amount_usdc, status, claimable_at, claimed_at, created_at,
+        scheduled_payment_cycles(due_at, cycle_number, tx_signature, employer_signed),
+        payroll_schedules(title, employer_id, escrow_funded, escrow_tx_sig)
+      `)
+      .in("payroll_id", payrollIds)
+      .in("status", ["pending", "claimable", "claimed", "cancelled"])
+      .order("claimable_at", { ascending: true });
+
+    if (error) throw new DatabaseConnectionError(error.message);
+    // Return all claims — funded status being reset doesn't invalidate existing claims
+    return this.decorateScheduledClaims(data || []);
   }
 
   /**
@@ -528,7 +777,7 @@ export class PayrollService {
     if (!claim) throw new PayrollInputError("Claim not found");
     if (claim.wallet_address !== workerWallet)
       throw new PayrollInputError("Access denied");
-    if (claim.status !== "claimable") throw new PayrollInputError(`Claim is ${claim.status}`);
+    if (!["pending", "claimable"].includes(claim.status)) throw new PayrollInputError(`Claim is ${claim.status}`);
     if (new Date(claim.claimable_at) > now)
       throw new PayrollInputError("Funds not yet available");
 
@@ -537,6 +786,63 @@ export class PayrollService {
       .update({ status: "claimed", claim_tx_sig: txSig, claimed_at: now.toISOString() })
       .eq("id", claimId);
     if (error) throw new DatabaseConnectionError(error.message);
+  }
+
+  async buildGaslessClaimTransaction(claimId: string, workerWallet: string): Promise<string> {
+    const now = new Date();
+    const { data: claim } = await supabase
+      .from("scheduled_payment_claims")
+      .select("id, claimable_at, status, wallet_address, amount_usdc, cycle_id, scheduled_payment_cycles(due_at, payroll_schedules(employer_id))")
+      .eq("id", claimId).single() as any;
+
+    if (!claim) throw new PayrollInputError("Claim not found");
+    if (claim.wallet_address !== workerWallet) throw new PayrollInputError("Access denied");
+    if (!["pending", "claimable"].includes(claim.status)) throw new PayrollInputError(`Claim is ${claim.status}`);
+    if (new Date(claim.claimable_at) > now) throw new PayrollInputError("Funds not yet available");
+
+    const employerId = claim.scheduled_payment_cycles?.payroll_schedules?.employer_id;
+    if (!employerId) throw new PayrollInputError("Employer not found for this claim");
+
+    const { data: employer } = await supabase
+      .from("users").select("wallet_address").eq("id", employerId).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    const solana = new SolanaService();
+    return solana.buildGaslessClaimEscrow(
+      employer.wallet_address,
+      workerWallet,
+      Math.floor(new Date(claim.scheduled_payment_cycles.due_at).getTime() / 1000)
+    );
+  }
+
+  async rejectScheduledPayment(claimId: string, employerWallet: string): Promise<void> {
+    const wallet = validateWallet(employerWallet);
+    const { data: employer } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!employer) throw new PayrollInputError("Employer wallet not found");
+
+    const { data: claim } = await supabase
+      .from("scheduled_payment_claims")
+      .select("id, status, payroll_schedules(employer_id)")
+      .eq("id", claimId)
+      .single() as any;
+
+    if (!claim) throw new PayrollInputError("Payment not found");
+    if (claim.payroll_schedules?.employer_id !== employer.id) {
+      throw new PayrollInputError("Access denied");
+    }
+    if (claim.status === "claimed") {
+      throw new PayrollInputError("Payment has already been claimed");
+    }
+    if (claim.status === "cancelled") {
+      throw new PayrollInputError("Payment is already rejected");
+    }
+
+    const { error } = await supabase
+      .from("scheduled_payment_claims")
+      .update({ status: "cancelled" })
+      .eq("id", claimId);
+    if (error) throw new DatabaseConnectionError(error.message || "Failed to reject payment");
   }
 
   /**
@@ -567,6 +873,20 @@ export class PayrollService {
       console.log(`[Notification] Payroll "${ps?.title}" cycle ${cycle.cycle_number} — due ${cycle.due_at}`);
       console.log(`  Employer: ${employer?.display_name} | email: ${employer?.email || ps?.notification_email || 'none'}`);
 
+      const email = employer?.email || ps?.notification_email;
+      if (email && process.env.RESEND_API_KEY) {
+        try {
+          await resend.emails.send({
+            from: 'PayLink <notifications@resend.dev>',
+            to: email,
+            subject: `Action Required: PayLink Schedule "${ps?.title}" Due in 3 Days`,
+            html: `<p>Hi ${employer?.display_name || 'Employer'},</p><p>Your scheduled payroll <strong>${ps?.title}</strong> (cycle ${cycle.cycle_number}) is due on ${new Date(cycle.due_at).toLocaleDateString()}.</p><p>Please log in to PayLink to approve and sign the transaction.</p>`
+          });
+        } catch (e) {
+          console.error("Failed to send Resend email", e);
+        }
+      }
+
       // Mark notified regardless of email result
       await supabase
         .from("scheduled_payment_cycles")
@@ -579,6 +899,114 @@ export class PayrollService {
   }
 
   // ── Internals ────────────────────────────────────────────────────────────
+
+  private async createCycleWithClaims(
+    payrollId: string,
+    cycleNumber: number,
+    dueDate: Date,
+  ): Promise<PayrollCycle> {
+    const signOpenAt = new Date(dueDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+
+    const { data: cycle, error: cycleErr } = await supabase
+      .from("scheduled_payment_cycles")
+      .insert({
+        payroll_id: payrollId,
+        cycle_number: cycleNumber,
+        due_at: dueDate.toISOString(),
+        sign_open_at: signOpenAt.toISOString(),
+        status: "pending",
+        employer_signed: false,
+      })
+      .select("id, payroll_id, cycle_number, due_at, sign_open_at, employer_signed, signed_at, tx_signature, status, notified_at, created_at")
+      .single();
+
+    if (cycleErr || !cycle) {
+      throw new DatabaseConnectionError(cycleErr?.message || "Failed to create payment cycle");
+    }
+
+    const members = await this.fetchPayrollMembers(payrollId);
+
+    if (members.length > 0) {
+      const claimRows = members.map((member) => ({
+        cycle_id: cycle.id,
+        payroll_id: payrollId,
+        member_id: member.id,
+        worker_id: member.worker_id ?? null,
+        wallet_address: member.wallet_address,
+        amount_usdc: member.amount_usdc,
+        status: "pending",
+        claimable_at: dueDate.toISOString(),
+      }));
+
+      const { error: claimErr } = await supabase
+        .from("scheduled_payment_claims")
+        .insert(claimRows);
+
+      if (claimErr) {
+        throw new DatabaseConnectionError(claimErr.message || "Failed to create payment claims");
+      }
+    }
+
+    return cycle as PayrollCycle;
+  }
+
+  private async syncElapsedCycles(employerId: string): Promise<void> {
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: expiredSchedules, error } = await supabase
+        .from("payroll_schedules")
+        .select("id, frequency, next_run_at")
+        .eq("employer_id", employerId)
+        .eq("is_active", true)
+        .not("frequency", "is", null)
+        .not("next_run_at", "is", null)
+        .lte("next_run_at", nowIso);
+
+      if (error || !expiredSchedules?.length) return;
+
+      for (const schedule of expiredSchedules) {
+        if (!schedule.frequency || !schedule.next_run_at) continue;
+
+        const currentDueAt = new Date(schedule.next_run_at);
+        const { data: latestCycle } = await supabase
+          .from("scheduled_payment_cycles")
+          .select("id, cycle_number, due_at")
+          .eq("payroll_id", schedule.id)
+          .order("cycle_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        let nextDueAt: Date;
+        if (latestCycle?.due_at && new Date(latestCycle.due_at) > currentDueAt) {
+          nextDueAt = new Date(latestCycle.due_at);
+        } else {
+          nextDueAt = computeCycleDates(
+            schedule.frequency as PayrollFrequency,
+            currentDueAt,
+            1,
+          )[0];
+          await this.createCycleWithClaims(
+            schedule.id,
+            (latestCycle?.cycle_number ?? 0) + 1,
+            nextDueAt,
+          );
+        }
+
+        await supabase
+          .from("payroll_schedules")
+          .update({
+            next_run_at: nextDueAt.toISOString(),
+            escrow_funded: false,
+            escrow_amount_usdc: 0,
+            escrow_tx_sig: null,
+          })
+          .eq("id", schedule.id)
+          .eq("employer_id", employerId);
+      }
+    } catch (error) {
+      console.warn("[syncElapsedCycles] Skipping cycle sync:", error);
+    }
+  }
 
   private async resolveMembers(members: MemberInput[], employerId: string, employerWallet: string) {
     const resolved: { worker_id: string | null; wallet_address: string; label: string | null; amount_usdc: number; memo: string | null }[] = [];
@@ -607,6 +1035,19 @@ export class PayrollService {
     return resolved;
   }
 
+  private async fetchPayrollMembers(payrollId: string): Promise<any[]> {
+    const { data, error } = await supabase
+      .from("payroll_members")
+      .select("id, payroll_id, worker_id, wallet_address, label, amount_usdc, memo")
+      .eq("payroll_id", payrollId);
+
+    if (error) {
+      throw new DatabaseConnectionError(error.message || "Failed to fetch payroll members");
+    }
+
+    return data || [];
+  }
+
   private async enrichMembers(members: any[]): Promise<PayrollMember[]> {
     const workerIds = members.map((m) => m.worker_id).filter((id): id is string => !!id);
     let userMap: Record<string, { username: string; display_name: string; icon_key: string | null }> = {};
@@ -624,6 +1065,21 @@ export class PayrollService {
         wallet_address: m.wallet_address, label: m.label ?? null,
         username: user?.username ?? null, display_name: user?.display_name ?? null,
         icon_key: user?.icon_key ?? null, amount_usdc: Number(m.amount_usdc), memo: m.memo ?? null,
+      };
+    });
+  }
+
+  private decorateScheduledClaims(claims: any[]): any[] {
+    const now = Date.now();
+    return claims.map((claim) => {
+      const claimableAt = new Date(claim.claimable_at);
+      const isUnlocked = claimableAt.getTime() <= now;
+      const canClaim = ["pending", "claimable"].includes(claim.status) && isUnlocked;
+
+      return {
+        ...claim,
+        can_claim: canClaim,
+        is_locked: ["pending", "claimable"].includes(claim.status) && !isUnlocked,
       };
     });
   }

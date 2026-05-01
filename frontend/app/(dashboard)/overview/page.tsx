@@ -5,19 +5,43 @@ import { useSolanaBalance } from "@/hooks/useSolanaBalance";
 import { useRecentTransactions } from "@/hooks/useRecentTransactions";
 import Link from "next/link";
 import { getOnboardedUser } from "@/lib/onboarding-storage";
-import type { UserProfile } from "@/lib/api";
+import { fetchClaimablePayments, fetchReputationScore, type ScheduledPaymentClaim, type UserProfile, type ReputationScore } from "@/lib/api";
 import { CopyValueButton } from "@/components/CopyValueButton";
 import { shortenAddress } from "@/lib/format";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { ReputationBadge } from "@/components/ReputationBadge";
 
 export default function OverviewPage() {
+  const { publicKey } = useWallet();
   const { data: balance, isLoading } = useSolanaBalance();
   const { data: transactions, isLoading: isTxsLoading } =
     useRecentTransactions();
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [scheduledClaims, setScheduledClaims] = useState<ScheduledPaymentClaim[]>([]);
+  const [isLoadingClaims, setIsLoadingClaims] = useState(false);
+  const [reputation, setReputation] = useState<ReputationScore | null>(null);
 
   useEffect(() => {
-    setUser(getOnboardedUser());
+    const u = getOnboardedUser();
+    setUser(u);
+    if (u?.username) {
+      fetchReputationScore(u.username).then(setReputation);
+    }
   }, []);
+
+  useEffect(() => {
+    const wallet = publicKey?.toBase58();
+    if (!wallet) {
+      setScheduledClaims([]);
+      return;
+    }
+
+    setIsLoadingClaims(true);
+    fetchClaimablePayments(wallet)
+      .then(setScheduledClaims)
+      .catch(() => setScheduledClaims([]))
+      .finally(() => setIsLoadingClaims(false));
+  }, [publicKey]);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const paylinkUrl = user
     ? `${appUrl}/u/${user.username}`
@@ -105,6 +129,56 @@ export default function OverviewPage() {
               />
             </div>
           ) : null}
+        </div>
+      </div>
+
+      {reputation && (
+        <div className="w-full">
+          <ReputationBadge reputation={reputation} />
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-[#1A2235] bg-[#0D1B35] p-5 sm:p-6">
+        <h3 className="mb-4 text-lg font-semibold text-white">
+          Scheduled Incoming Payments
+        </h3>
+        <div className="flex flex-col gap-3">
+          {isLoadingClaims ? (
+            <p className="text-sm text-[#8896B3]">Loading scheduled payments...</p>
+          ) : scheduledClaims.length > 0 ? (
+            scheduledClaims.map((claim) => {
+              const title = claim.payroll_schedules?.title || "Payroll payment";
+              const unlockDate = new Date(claim.claimable_at);
+              const statusLabel =
+                claim.status === "claimed" ? "Claimed" :
+                claim.status === "cancelled" ? "Rejected" :
+                claim.can_claim ? "Ready to claim" :
+                `Locked until ${unlockDate.toLocaleDateString()}`;
+
+              return (
+                <div key={claim.id} className="flex flex-col gap-3 border-b border-[#1A2235] pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-white">{title}</p>
+                    <p className="mt-1 text-sm text-[#8896B3]">
+                      ${Number(claim.amount_usdc).toFixed(2)} · {statusLabel}
+                    </p>
+                  </div>
+                  <span className={`self-start rounded-full px-3 py-1 text-xs font-bold sm:self-auto ${
+                    claim.status === "claimed" ? "bg-[#00C896]/10 text-[#00C896]" :
+                    claim.status === "cancelled" ? "bg-[#FF5F82]/10 text-[#FF5F82]" :
+                    claim.can_claim ? "bg-amber-500/10 text-amber-300" :
+                    "bg-[#1A2235] text-[#8896B3]"
+                  }`}>
+                    {claim.status === "claimed" ? "Claimed" : claim.status === "cancelled" ? "Rejected" : claim.can_claim ? "Available" : "Locked"}
+                  </span>
+                </div>
+              );
+            })
+          ) : (
+            <p className="text-sm text-[#8896B3]">
+              No scheduled incoming payments yet.
+            </p>
+          )}
         </div>
       </div>
 

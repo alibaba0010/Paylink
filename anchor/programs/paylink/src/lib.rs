@@ -31,6 +31,7 @@ pub mod paylink {
     pub fn deposit_escrow(
         ctx: Context<DepositEscrow>,
         worker: Pubkey,
+        escrow_id: u64,
         amount: u64,
         unlock_time: i64,   // 0 = immediately claimable
     ) -> Result<()> {
@@ -39,6 +40,7 @@ pub mod paylink {
         let escrow = &mut ctx.accounts.escrow;
         escrow.employer    = ctx.accounts.employer.key();
         escrow.worker      = worker;
+        escrow.escrow_id   = escrow_id;
         escrow.amount      = amount;
         escrow.unlock_time = unlock_time;
         escrow.is_claimed  = false;
@@ -67,9 +69,10 @@ pub mod paylink {
     }
 
     /// Worker claims their payment from escrow
-    pub fn claim_payment(ctx: Context<ClaimPayment>) -> Result<()> {
+    pub fn claim_payment(ctx: Context<ClaimPayment>, escrow_id: u64) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
 
+        require!(escrow.escrow_id == escrow_id, PayLinkError::Unauthorized);
         require!(!escrow.is_claimed,                        PayLinkError::AlreadyClaimed);
         require!(escrow.worker == ctx.accounts.worker.key(), PayLinkError::Unauthorized);
 
@@ -111,8 +114,9 @@ pub mod paylink {
     }
 
     /// Employer cancels unclaimed payroll — USDC refunded
-    pub fn cancel_payroll(ctx: Context<CancelPayroll>) -> Result<()> {
+    pub fn cancel_payroll(ctx: Context<CancelPayroll>, escrow_id: u64) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
+        require!(escrow.escrow_id == escrow_id, PayLinkError::Unauthorized);
         require!(!escrow.is_claimed,                           PayLinkError::AlreadyClaimed);
         require!(escrow.employer == ctx.accounts.employer.key(), PayLinkError::Unauthorized);
         escrow.is_claimed = true; // mark as consumed to prevent double-spend
@@ -153,6 +157,7 @@ pub struct PaymentLink {
 pub struct EscrowAccount {
     pub employer:    Pubkey,  // 32
     pub worker:      Pubkey,  // 32
+    pub escrow_id:   u64,     // 8
     pub amount:      u64,     // 8
     pub unlock_time: i64,     // 8
     pub is_claimed:  bool,    // 1
@@ -178,11 +183,12 @@ pub struct CreatePaymentLink<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(worker: Pubkey, escrow_id: u64)]
 pub struct DepositEscrow<'info> {
     #[account(
         init, payer = employer,
-        space = 8 + 32 + 32 + 8 + 8 + 1 + 8 + 8,
-        seeds = [b"escrow", employer.key().as_ref(), worker_usdc.key().as_ref()],
+        space = 8 + 32 + 32 + 8 + 8 + 8 + 1 + 8 + 8,
+        seeds = [b"escrow", employer.key().as_ref(), worker_usdc.key().as_ref(), &escrow_id.to_le_bytes()],
         bump
     )]
     pub escrow: Account<'info, EscrowAccount>,
@@ -205,10 +211,11 @@ pub struct DepositEscrow<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(escrow_id: u64)]
 pub struct ClaimPayment<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", escrow.employer.as_ref(), worker_usdc.key().as_ref()],
+        seeds = [b"escrow", escrow.employer.as_ref(), worker_usdc.key().as_ref(), &escrow_id.to_le_bytes()],
         bump
     )]
     pub escrow: Account<'info, EscrowAccount>,
@@ -223,10 +230,11 @@ pub struct ClaimPayment<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(escrow_id: u64)]
 pub struct CancelPayroll<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", employer.key().as_ref(), escrow.worker.as_ref()],
+        seeds = [b"escrow", employer.key().as_ref(), worker_usdc.key().as_ref(), &escrow_id.to_le_bytes()],
         bump
     )]
     pub escrow: Account<'info, EscrowAccount>,
@@ -237,6 +245,7 @@ pub struct CancelPayroll<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
     #[account(mut)]
     pub employer_usdc: Account<'info, TokenAccount>,
+    pub worker_usdc: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 

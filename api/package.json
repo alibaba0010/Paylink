@@ -13,8 +13,11 @@
     "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.103.3",
     "axios": "^1.15.0",
+    "bs58": "^6.0.0",
     "dotenv": "^17.4.2",
-    "fastify": "^5.8.5"
+    "ethers": "^6.16.0",
+    "fastify": "^5.8.5",
+    "resend": "^6.12.2"
   },
   "devDependencies": {
     "@types/axios": "^0.14.0",
