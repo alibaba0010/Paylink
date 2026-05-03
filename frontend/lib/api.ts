@@ -587,7 +587,12 @@ export async function verifyCrossChainPayment(payload: {
   recipient_wallet: string;
   amount_usdc: number;
 }) {
-  const { data } = await api.post<{ success: boolean; destTxSignature: string }>(`/cross-chain/verify`, payload);
+  const { data } = await api.post<{
+    success: boolean;
+    status?: 'pending' | 'completed';
+    message?: string;
+    destTxSignature?: string;
+  }>(`/cross-chain/verify`, payload);
   return data;
 }
 

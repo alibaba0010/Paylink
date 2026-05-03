@@ -9,6 +9,12 @@ import { UserAvatar } from '@/components/UserAvatar';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
 import { fetchInvoice, fetchInvoiceComments, addInvoiceComment, payInvoice, api, type Invoice, type InvoiceComment } from '@/lib/api';
 import { shortenAddress } from '@/lib/format';
+import {
+  confirmSignatureWithStatus,
+  DEVNET_USDC_MINT,
+  getUsdcBalanceRaw,
+  waitForRecipientUsdcCredit,
+} from '@/lib/solana-payments';
 import { Loader2, CheckCircle2, MessageSquare, Send, ExternalLink, ShieldCheck, AlertCircle } from 'lucide-react';
 
 export default function PublicInvoicePage({ params }: { params: { id: string } }) {
@@ -58,8 +64,7 @@ export default function PublicInvoicePage({ params }: { params: { id: string } }
 
     try {
       // 1. Check user balance first
-      const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
-      const senderATA = await getAssociatedTokenAddress(USDC_MINT, publicKey);
+      const senderATA = await getAssociatedTokenAddress(DEVNET_USDC_MINT, publicKey);
       const tokenAccountBalance = await connection.getTokenAccountBalance(senderATA);
       const uiAmount = tokenAccountBalance.value.uiAmount || 0;
       if (uiAmount < invoice.total_usdc) {
@@ -76,9 +81,19 @@ export default function PublicInvoicePage({ params }: { params: { id: string } }
     }
 
     try {
+      const recipientWallet = invoice.creator?.wallet_address;
+      if (!recipientWallet) {
+        throw new Error('Invoice recipient wallet is missing');
+      }
+
+      const recipientStartingBalance = await getUsdcBalanceRaw(
+        connection,
+        new PublicKey(recipientWallet),
+      );
+
       // 2. Initiate transfer
       const { data } = await api.post('/payments/initiate', {
-        recipient_wallet: invoice.creator?.wallet_address,
+        recipient_wallet: recipientWallet,
         sender_pubkey: publicKey.toString(),
         amount_usdc: invoice.total_usdc,
         memo: `Invoice ${invoice.invoice_number}`,
@@ -92,7 +107,13 @@ export default function PublicInvoicePage({ params }: { params: { id: string } }
 
       // 4. Confirm
       setPayStatus('confirming');
-      await connection.confirmTransaction(sig, 'confirmed');
+      await confirmSignatureWithStatus(connection, sig);
+      await waitForRecipientUsdcCredit(
+        connection,
+        recipientWallet,
+        invoice.total_usdc,
+        recipientStartingBalance,
+      );
 
       // 5. Mark invoice paid
       await payInvoice(invoice.id, publicKey.toString(), sig);

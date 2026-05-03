@@ -1,5 +1,6 @@
 import {
-  ComputeBudgetProgram, Connection, PublicKey, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction
+  ComputeBudgetProgram, Connection, PublicKey, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction,
+  type ParsedTransactionMeta,
 } from '@solana/web3.js';
 import { Program, AnchorProvider, BN } from '@coral-xyz/anchor';
 import {
@@ -265,6 +266,45 @@ export class SolanaService {
     return sig;
   }
 
+  async verifyDirectUsdcTransfer(
+    signature: string,
+    senderWallet: string,
+    recipientWallet: string,
+    amountUSDC: number,
+  ): Promise<void> {
+    const sender = new PublicKey(senderWallet);
+    const recipient = new PublicKey(recipientWallet);
+    const expectedAmount = BigInt(Math.round(amountUSDC * 1_000_000));
+
+    const parsedTransaction = await this.waitForParsedTransaction(signature);
+    if (!parsedTransaction) {
+      throw new Error("Transaction was not found on Solana yet. Wait a moment and confirm again.");
+    }
+
+    if (parsedTransaction.meta?.err) {
+      throw new Error(`Transaction failed on Solana: ${JSON.stringify(parsedTransaction.meta.err)}`);
+    }
+
+    const senderSigned = parsedTransaction.transaction.message.accountKeys.some(account =>
+      account.pubkey.equals(sender) && account.signer
+    );
+    if (!senderSigned) {
+      throw new Error("Transaction was not signed by the expected sender wallet.");
+    }
+
+    const receivedAmount = this.getTokenBalanceDeltaForOwner(
+      parsedTransaction.meta,
+      recipient,
+      this.USDC_MINT,
+    );
+
+    if (receivedAmount < expectedAmount) {
+      throw new Error(
+        `Recipient did not receive the expected USDC amount. Expected ${expectedAmount.toString()} raw units, received ${receivedAmount.toString()}.`,
+      );
+    }
+  }
+
   /**
    * Build a create_payment_link transaction for a worker.
    */
@@ -496,6 +536,46 @@ export class SolanaService {
 
     instructions.push(depositInstruction);
     return instructions;
+  }
+
+  private async waitForParsedTransaction(signature: string) {
+    const deadline = Date.now() + 45_000;
+
+    while (Date.now() < deadline) {
+      const status = await this.connection.getSignatureStatus(signature, {
+        searchTransactionHistory: true,
+      });
+      if (status.value?.err) {
+        throw new Error(`Transaction failed on Solana: ${JSON.stringify(status.value.err)}`);
+      }
+
+      const parsedTransaction = await this.connection.getParsedTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (parsedTransaction) return parsedTransaction;
+
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+    }
+
+    return null;
+  }
+
+  private getTokenBalanceDeltaForOwner(
+    meta: ParsedTransactionMeta | null | undefined,
+    owner: PublicKey,
+    mint: PublicKey,
+  ): bigint {
+    const ownerAddress = owner.toBase58();
+    const mintAddress = mint.toBase58();
+
+    const sumBalances = (balances: ParsedTransactionMeta['preTokenBalances'] | undefined) =>
+      (balances ?? []).reduce((total, balance) => {
+        if (balance.owner !== ownerAddress || balance.mint !== mintAddress) return total;
+        return total + BigInt(balance.uiTokenAmount.amount);
+      }, BigInt(0));
+
+    return sumBalances(meta?.postTokenBalances) - sumBalances(meta?.preTokenBalances);
   }
 
   private u64SeedBuffer(value: bigint): Buffer {

@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
-import { verifyCrossChainPayment } from '@/lib/api';
+import { PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
+
 import { CheckCircle2, ExternalLink, RefreshCw, AlertCircle, ChevronDown } from 'lucide-react';
 
-type Status = 'idle' | 'connecting' | 'sending_evm' | 'verifying' | 'done' | 'error';
+type Status = 'idle' | 'connecting' | 'sending_evm' | 'done' | 'error';
 type NetworkId = 'sepolia' | 'avalanche_fuji' | 'sui' | 'hedera';
 
 interface CrossChainPaymentFormProps {
@@ -16,30 +18,48 @@ interface CrossChainPaymentFormProps {
 const EVM_CHAINS = {
   sepolia: {
     chainId: '0xaa36a7', // 11155111
+    domain: 0,
     chainName: 'Sepolia',
     rpcUrls: ['https://rpc2.sepolia.org'],
     nativeCurrency: { name: 'Sepolia ETH', symbol: 'SEP', decimals: 18 },
     blockExplorerUrls: ['https://sepolia.etherscan.io'],
-    usdcAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+    usdcAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    tokenMessengerAddress: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
   },
   avalanche_fuji: {
     chainId: '0xa869', // 43113
+    domain: 1,
     chainName: 'Avalanche Fuji Testnet',
     rpcUrls: ['https://api.avax-test.network/ext/bc/C/rpc'],
     nativeCurrency: { name: 'AVAX', symbol: 'AVAX', decimals: 18 },
     blockExplorerUrls: ['https://testnet.snowtrace.io'],
-    usdcAddress: "0x5425890298aed601595a70ab815c96711a31bc65"
+    usdcAddress: "0x5425890298aed601595a70ab815c96711a31bc65",
+    tokenMessengerAddress: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
   }
 };
 
-// A dummy deposit address if env is missing
-const EVM_DEPOSIT_ADDRESS = process.env.NEXT_PUBLIC_EVM_DEPOSIT_ADDRESS || "0x000000000000000000000000000000000000dEaD";
+type EvmNetworkId = keyof typeof EVM_CHAINS;
+const SOLANA_DOMAIN = 5;
+const SOLANA_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+const DESTINATION_CALLER_ANY = ethers.ZeroHash;
+const CCTP_STANDARD_TRANSFER_FINALITY_THRESHOLD = 2000;
 
 const ERC20_ABI = [
-  "function transfer(address to, uint256 amount) returns (bool)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address account) view returns (uint256)",
   "function decimals() view returns (uint8)"
 ];
+
+const TOKEN_MESSENGER_ABI = [
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)"
+];
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function solanaAddressToBytes32(address: PublicKey) {
+  return ethers.hexlify(address.toBytes());
+}
 
 export function CrossChainPaymentForm({
   recipientUsername,
@@ -49,7 +69,7 @@ export function CrossChainPaymentForm({
   const [amount, setAmount] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState('');
-  const [solanaTxSig, setSolanaTxSig] = useState('');
+
   const [evmTxHash, setEvmTxHash] = useState('');
   const [evmAccount, setEvmAccount] = useState<string | null>(null);
 
@@ -76,32 +96,50 @@ export function CrossChainPaymentForm({
     if (network === 'sui' || network === 'hedera') {
       setErrorMsg(`${network === 'sui' ? 'Sui' : 'Hedera'} integration is coming soon!`);
       setStatus('error');
-      return;
+      return null;
     }
 
     if (typeof window === 'undefined' || !(window as any).ethereum) {
       setErrorMsg("Please install MetaMask or another Web3 wallet.");
       setStatus('error');
-      return;
+      return null;
     }
     
     setStatus('connecting');
     try {
-      const accounts = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
-      setEvmAccount(accounts[0]);
+      const account = await ensureEvmWalletReady(network);
       
-      const chainConfig = EVM_CHAINS[network as keyof typeof EVM_CHAINS];
-      
-      // Request network switch
+      setStatus('idle');
+      setErrorMsg('');
+      return account;
+    } catch (err: any) {
+      console.error(err);
+      handleError(err);
+      return null;
+    }
+  }
+
+  async function ensureEvmWalletReady(selectedNetwork: EvmNetworkId) {
+    if (typeof window === 'undefined' || !(window as any).ethereum) {
+      throw new Error("Please install MetaMask or another Web3 wallet.");
+    }
+
+    const ethereum = (window as any).ethereum;
+    const chainConfig = EVM_CHAINS[selectedNetwork];
+    const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+    const account = accounts[0];
+
+    const currentChainId = await ethereum.request({ method: 'eth_chainId' });
+    if (currentChainId?.toLowerCase() !== chainConfig.chainId.toLowerCase()) {
       try {
-        await (window as any).ethereum.request({
+        await ethereum.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: chainConfig.chainId }],
         });
       } catch (switchError: any) {
         // This error code indicates that the chain has not been added to MetaMask.
         if (switchError.code === 4902) {
-          await (window as any).ethereum.request({
+          await ethereum.request({
             method: 'wallet_addEthereumChain',
             params: [
               {
@@ -117,19 +155,29 @@ export function CrossChainPaymentForm({
           throw switchError;
         }
       }
-      
-      setStatus('idle');
-      setErrorMsg('');
-    } catch (err: any) {
-      console.error(err);
-      handleError(err);
+
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const switchedChainId = await ethereum.request({ method: 'eth_chainId' });
+        if (switchedChainId?.toLowerCase() === chainConfig.chainId.toLowerCase()) break;
+        await wait(100);
+      }
     }
+
+    const activeChainId = await ethereum.request({ method: 'eth_chainId' });
+    if (activeChainId?.toLowerCase() !== chainConfig.chainId.toLowerCase()) {
+      throw new Error(`Switch your wallet to ${chainConfig.chainName} and try again.`);
+    }
+
+    setEvmAccount(account);
+    return account;
   }
 
   function handleError(err: any) {
     let newErrorMsg = "Transaction failed.";
     if (err?.code === 'ACTION_REJECTED' || err?.message?.includes('user rejected') || err?.code === 4001) {
       newErrorMsg = "User denied transaction signature.";
+    } else if (err?.response?.data?.message) {
+      newErrorMsg = err.response.data.message;
     } else if (err?.info?.error?.message) {
       newErrorMsg = err.info.error.message;
     } else if (err?.message) {
@@ -142,6 +190,13 @@ export function CrossChainPaymentForm({
       }
     }
     setErrorMsg(newErrorMsg);
+    console.error('[cross-chain] payment error', {
+      network,
+      recipientWallet,
+      evmTxHash,
+      message: newErrorMsg,
+      raw: err,
+    });
     setStatus('error');
   }
 
@@ -149,11 +204,6 @@ export function CrossChainPaymentForm({
     if (network === 'sui' || network === 'hedera') {
       setErrorMsg(`${network === 'sui' ? 'Sui' : 'Hedera'} integration is coming soon!`);
       setStatus('error');
-      return;
-    }
-
-    if (!evmAccount) {
-      await connectWallet();
       return;
     }
 
@@ -168,48 +218,118 @@ export function CrossChainPaymentForm({
     setErrorMsg('');
 
     try {
+      const chainConfig = EVM_CHAINS[network as EvmNetworkId];
+      const activeAccount = await ensureEvmWalletReady(network as EvmNetworkId);
+      console.log('[cross-chain] wallet ready', {
+        network,
+        account: activeAccount,
+        chainId: chainConfig.chainId,
+        recipientWallet,
+        amount: parsedAmount,
+      });
+
+      // Create the ethers provider only after MetaMask has settled on the target chain.
       const provider = new ethers.BrowserProvider((window as any).ethereum);
       const signer = await provider.getSigner();
-      
-      const chainConfig = EVM_CHAINS[network as keyof typeof EVM_CHAINS];
-      
-      // Ensure we are on the correct network before sending
+
       const networkData = await provider.getNetwork();
       if (networkData.chainId !== BigInt(chainConfig.chainId)) {
-        await connectWallet(); // This forces a network switch
+        throw new Error(`Switch your wallet to ${chainConfig.chainName} and try again.`);
       }
 
       // Check user balance first
       const usdcContract = new ethers.Contract(chainConfig.usdcAddress, ERC20_ABI, signer);
       const amountInUnits = ethers.parseUnits(parsedAmount.toString(), 6); // USDC has 6 decimals
       
-      const balance = await usdcContract.balanceOf(evmAccount);
+      const balance = await usdcContract.balanceOf(activeAccount);
+      console.log('[cross-chain] source USDC balance checked', {
+        network,
+        account: activeAccount,
+        balanceRaw: balance.toString(),
+        amountRaw: amountInUnits.toString(),
+        usdc: chainConfig.usdcAddress,
+      });
       if (balance < amountInUnits) {
         throw new Error(`Insufficient USDC balance on ${chainConfig.chainName}. You need at least ${parsedAmount} USDC.`);
       }
+
+      const allowance = await usdcContract.allowance(activeAccount, chainConfig.tokenMessengerAddress);
+      console.log('[cross-chain] allowance checked', {
+        network,
+        account: activeAccount,
+        allowanceRaw: allowance.toString(),
+        requiredRaw: amountInUnits.toString(),
+        spender: chainConfig.tokenMessengerAddress,
+      });
+      if (allowance < amountInUnits) {
+        console.log('[cross-chain] requesting USDC spending cap approval', {
+          network,
+          spender: chainConfig.tokenMessengerAddress,
+          amountRaw: amountInUnits.toString(),
+        });
+        const approveTx = await usdcContract.approve(chainConfig.tokenMessengerAddress, amountInUnits);
+        console.log('[cross-chain] approval submitted', { network, txHash: approveTx.hash });
+        const approvalReceipt = await approveTx.wait(1);
+        console.log('[cross-chain] approval confirmed', {
+          network,
+          txHash: approveTx.hash,
+          status: approvalReceipt?.status,
+          blockNumber: approvalReceipt?.blockNumber,
+        });
+      }
+
+      const recipientAta = getAssociatedTokenAddressSync(
+        SOLANA_USDC_MINT,
+        new PublicKey(recipientWallet)
+      );
+      const mintRecipient = solanaAddressToBytes32(recipientAta);
+      console.log('[cross-chain] prepared CCTP burn', {
+        network,
+        sourceDomain: chainConfig.domain,
+        destinationDomain: SOLANA_DOMAIN,
+        recipientWallet,
+        recipientUsdcTokenAccount: recipientAta.toBase58(),
+        note: 'CCTP mints to the USDC token account (ATA), not the wallet directly',
+        mintRecipientBytes32: mintRecipient,
+        amountRaw: amountInUnits.toString(),
+      });
+      const tokenMessenger = new ethers.Contract(
+        chainConfig.tokenMessengerAddress,
+        TOKEN_MESSENGER_ABI,
+        signer
+      );
+      // Standard CCTP transfers use finalized attestation and are fee-free.
+      // Some testnet TokenMessengerV2 deployments do not support getMinFeeAmount.
+      const maxFee = BigInt(0);
       
-      const tx = await usdcContract.transfer(EVM_DEPOSIT_ADDRESS, amountInUnits);
+      const tx = await tokenMessenger.depositForBurn(
+        amountInUnits,
+        SOLANA_DOMAIN,
+        mintRecipient,
+        chainConfig.usdcAddress,
+        DESTINATION_CALLER_ANY,
+        maxFee,
+        CCTP_STANDARD_TRANSFER_FINALITY_THRESHOLD
+      );
       setEvmTxHash(tx.hash);
+      console.log('[cross-chain] depositForBurn submitted', {
+        network,
+        txHash: tx.hash,
+        amountRaw: amountInUnits.toString(),
+        recipientAta: recipientAta.toBase58(),
+      });
       
       // Wait for 1 confirmation
-      await tx.wait(1);
-
-      setStatus('verifying');
-
-      // Now tell the backend to verify and fulfill on Solana
-      const result = await verifyCrossChainPayment({
-        source_chain: network,
-        tx_hash: tx.hash,
-        recipient_wallet: recipientWallet,
-        amount_usdc: parsedAmount,
+      const burnReceipt = await tx.wait(1);
+      console.log('[cross-chain] depositForBurn confirmed', {
+        network,
+        txHash: tx.hash,
+        status: burnReceipt?.status,
+        blockNumber: burnReceipt?.blockNumber,
       });
 
-      if (result.success) {
-        setSolanaTxSig(result.destTxSignature);
-        setStatus('done');
-      } else {
-        throw new Error("Backend verification failed");
-      }
+      // Burn confirmed — Circle CCTP will handle the attestation and Solana mint
+      setStatus('done');
 
     } catch (err: any) {
       console.error(err);
@@ -235,6 +355,8 @@ export function CrossChainPaymentForm({
         </div>
       )}
 
+
+
       {status === 'done' ? (
         <div className="mt-2 flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
           <div className="h-16 w-16 rounded-full bg-[#00C896]/10 flex items-center justify-center text-[#00C896]">
@@ -242,7 +364,9 @@ export function CrossChainPaymentForm({
           </div>
           <div className="text-center">
             <p className="text-white font-black uppercase tracking-widest text-sm mb-1">Cross-Chain Success!</p>
-            <p className="text-[#8896B3] text-xs mb-3">Funds bridged and sent to recipient on Solana.</p>
+            <p className="text-[#8896B3] text-xs mb-3">
+              USDC burned on {network === 'sepolia' ? 'Ethereum' : 'Avalanche'}. Circle CCTP will deliver to recipient on Solana.
+            </p>
             <div className="flex flex-col gap-2">
               <a
                 href={getExplorerUrl(evmTxHash)}
@@ -250,18 +374,8 @@ export function CrossChainPaymentForm({
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-2 text-[#8896B3] text-xs hover:text-[#3B82F6] transition-colors group"
               >
-                1. {network === 'sepolia' ? 'Ethereum' : 'Avalanche'} Tx <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                View on {network === 'sepolia' ? 'Etherscan' : 'Snowtrace'} <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </a>
-              {solanaTxSig && !solanaTxSig.startsWith('mock_sig') && (
-                <a
-                  href={`https://solscan.io/tx/${solanaTxSig}?cluster=devnet`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 text-[#8896B3] text-xs hover:text-[#00C896] transition-colors group"
-                >
-                  2. Solana Payout Tx <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                </a>
-              )}
             </div>
           </div>
         </div>
@@ -315,15 +429,14 @@ export function CrossChainPaymentForm({
           >
             {status === 'connecting' ? 'Connecting...' :
              status === 'sending_evm' ? <><RefreshCw className="animate-spin" size={18} /> Sending Transaction...</> :
-             status === 'verifying' ? <><RefreshCw className="animate-spin" size={18} /> Bridging to Solana...</> :
              network === 'sui' || network === 'hedera' ? 'Coming Soon' :
              !evmAccount ? 'Connect EVM Wallet' :
-             `Bridge & Pay ${amount ? `$${amount}` : ''}`}
+             `Pay ${amount ? `$${amount}` : ''}`}
           </button>
           
           <div className="mt-2 rounded-xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 p-3 text-xs text-[#3B82F6] text-center flex flex-col gap-1">
-            <span className="font-bold uppercase tracking-wider">Cross-Chain Magic 🪄</span>
-            <span className="text-white/60">Pay with {network === 'sepolia' ? 'Ethereum' : network === 'avalanche_fuji' ? 'Avalanche' : 'other'} USDC. Recipient gets Solana USDC.</span>
+            <span className="font-bold uppercase tracking-wider">Cross-Chain Payment 🪄</span>
+            <span className="text-white/60">Pay with {network === 'sepolia' ? 'Ethereum' : network === 'avalanche_fuji' ? 'Avalanche' : 'other'} USDC. Recipient gets Solana USDC via Circle CCTP.</span>
           </div>
         </>
       )}

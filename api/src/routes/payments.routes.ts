@@ -180,6 +180,20 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       dbLinkId = link?.id ?? null;
     }
 
+    try {
+      await solanaService.verifyDirectUsdcTransfer(
+        signature,
+        sender_wallet,
+        recipient_wallet,
+        Number(amount_usdc),
+      );
+    } catch (error: any) {
+      return reply.code(409).send({
+        success: false,
+        message: error.message || "Could not verify the recipient received USDC",
+      });
+    }
+
     const { error } = await supabase.from("payments").insert({
       link_id: dbLinkId,
       sender_wallet,
@@ -250,6 +264,24 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
     }
 
     const totalUsdc = recipients.reduce((s, r) => s + r.amount_usdc, 0);
+
+    try {
+      await Promise.all(
+        recipients.map(r =>
+          solanaService.verifyDirectUsdcTransfer(
+            r.signature,
+            sender_wallet,
+            r.wallet_address,
+            Number(r.amount_usdc),
+          ),
+        ),
+      );
+    } catch (error: any) {
+      return reply.code(409).send({
+        success: false,
+        message: error.message || "Could not verify every recipient received USDC",
+      });
+    }
 
     // Create a parent payment record for the bulk operation
     const { data: parentPayment, error: parentErr } = await supabase

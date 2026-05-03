@@ -51,6 +51,7 @@ export function UserProfileClientTabs({ profile, username, pageUrl }: UserProfil
               recipientUsername={username}
               recipientWallet={profile.wallet_address}
               fixedAmount={null}
+              allowCustomWallet={false}
             />
           </div>
         ) : (

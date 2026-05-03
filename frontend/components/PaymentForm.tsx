@@ -5,6 +5,12 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { api } from '@/lib/api';
+import {
+  confirmSignatureWithStatus,
+  DEVNET_USDC_MINT,
+  getUsdcBalanceRaw,
+  waitForRecipientUsdcCredit,
+} from '@/lib/solana-payments';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
 import { ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -15,6 +21,7 @@ interface PaymentFormProps {
   recipientUsername:  string;
   recipientWallet:    string;
   fixedAmount:        number | null;
+  allowCustomWallet?: boolean;
 }
 
 export function PaymentForm({
@@ -22,6 +29,7 @@ export function PaymentForm({
   recipientUsername,
   recipientWallet,
   fixedAmount,
+  allowCustomWallet = true,
 }: PaymentFormProps) {
   const { publicKey, sendTransaction, connected } = useWallet();
   const { connection } = useConnection();
@@ -52,8 +60,7 @@ export function PaymentForm({
 
     try {
       // 1. Check user balance first
-      const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
-      const senderATA = await getAssociatedTokenAddress(USDC_MINT, publicKey);
+      const senderATA = await getAssociatedTokenAddress(DEVNET_USDC_MINT, publicKey);
       const tokenAccountBalance = await connection.getTokenAccountBalance(senderATA);
       const uiAmount = tokenAccountBalance.value.uiAmount || 0;
       if (uiAmount < parsedAmount) {
@@ -71,6 +78,11 @@ export function PaymentForm({
     }
 
     try {
+      const recipientStartingBalance = await getUsdcBalanceRaw(
+        connection,
+        new PublicKey(finalRecipientWallet),
+      );
+
       // 2. Ask our API to build the unsigned transaction
       const { data } = await api.post('/payments/initiate', {
         link_id:       isCustomWallet ? undefined : linkId,
@@ -89,7 +101,13 @@ export function PaymentForm({
 
       // 4. Wait for Solana confirmation
       setStatus('confirming');
-      await connection.confirmTransaction(sig, 'confirmed');
+      await confirmSignatureWithStatus(connection, sig);
+      await waitForRecipientUsdcCredit(
+        connection,
+        finalRecipientWallet,
+        parsedAmount,
+        recipientStartingBalance,
+      );
 
       // 5. Notify our backend so it updates the DB and sends notifications
       await api.post('/payments/confirm', {
@@ -152,14 +170,14 @@ export function PaymentForm({
       ) : (
         <>
           {/* Recipient Selector Toggle */}
-          {!isCustomWallet ? (
+          {allowCustomWallet && !isCustomWallet ? (
             <button
               onClick={() => setIsCustomWallet(true)}
               className="text-left text-xs text-[#00C896] hover:underline mb-1"
             >
               + Send to a different wallet address
             </button>
-          ) : (
+          ) : allowCustomWallet && isCustomWallet ? (
             <div className="flex flex-col gap-2 mb-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs text-[#8896B3]">Recipient Wallet Address</label>
@@ -183,7 +201,7 @@ export function PaymentForm({
                            focus:outline-none transition-colors"
               />
             </div>
-          )}
+          ) : null}
 
           {/* Amount, Memo, and Pay Button — only show if we have a recipient */}
           {(isCustomWallet || !!recipientWallet) && (
