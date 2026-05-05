@@ -23,7 +23,10 @@ server.addHook(
   async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header("Access-Control-Allow-Origin", frontendOrigin);
     reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,OPTIONS");
-    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-blockchain-ids, x-action-version");
+    reply.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, x-blockchain-ids, x-action-version",
+    );
 
     if (request.method === "OPTIONS") {
       return reply.code(204).send();
@@ -50,7 +53,7 @@ const start = async () => {
     await assertDatabaseConnection();
     server.log.info("Database connection verified");
 
-    await server.listen({ port });
+    await server.listen({ port, host: "[IP_ADDRESS]" });
     console.log(`PayLink API running on port ${port}`);
 
     // Start background health worker
