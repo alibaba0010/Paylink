@@ -581,6 +581,36 @@ export async function addInvoiceComment(id: string, payload: {
 
 // ── Cross-Chain Payments ──────────────────────────────────────────────────
 
+export async function getCrossChainLiquidity(payload: {
+  amount_usdc: number;
+}) {
+  const { data } = await api.post<{
+    success: boolean;
+    available: boolean;
+    message?: string;
+    solanaTreasury?: {
+      owner: string;
+      usdcAta: string;
+      usdcMint: string;
+      balanceRaw: string;
+      balanceUsdc: number;
+      requiredAmountRaw: string;
+      hasSufficientLiquidity: boolean;
+      tokenAccountExists: boolean;
+    };
+    cctp?: {
+      solanaDomain: number;
+      mintRecipient: string;
+      chains: Record<string, {
+        domain: number;
+        usdcAddress: string;
+        tokenMessengerAddress: string;
+      }>;
+    };
+  }>(`/cross-chain/preflight`, payload);
+  return data;
+}
+
 export async function verifyCrossChainPayment(payload: {
   source_chain: string;
   tx_hash: string;

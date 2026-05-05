@@ -1,10 +1,10 @@
 import {
-  ComputeBudgetProgram, Connection, PublicKey, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction,
+  ComputeBudgetProgram, Connection, PublicKey, SendTransactionError, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction,
   type ParsedTransactionMeta,
 } from '@solana/web3.js';
 import { Program, AnchorProvider, BN } from '@coral-xyz/anchor';
 import {
-  getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createTransferInstruction, createAssociatedTokenAccountInstruction
+  getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createTransferInstruction, createAssociatedTokenAccountInstruction, getAccount
 } from '@solana/spl-token';
 import idl from '../idl/paylink.json';
 type PayLink = any;
@@ -343,13 +343,14 @@ export class SolanaService {
     unlockTime: number,
   ): Promise<string> {
     const bs58 = require('bs58');
+    const decode = bs58.decode || (bs58.default && bs58.default.decode) || bs58;
     const { Keypair } = require('@solana/web3.js');
     
     if (!process.env.FEE_PAYER_PRIVATE_KEY) {
       throw new Error("FEE_PAYER_PRIVATE_KEY not configured on server.");
     }
 
-    const feePayer = Keypair.fromSecretKey(bs58.decode(process.env.FEE_PAYER_PRIVATE_KEY));
+    const feePayer = Keypair.fromSecretKey(decode(process.env.FEE_PAYER_PRIVATE_KEY));
     const employer = new PublicKey(employerPubkey);
     const worker = new PublicKey(workerPubkey);
     
@@ -402,21 +403,43 @@ export class SolanaService {
    * Execute a direct transfer using the backend's funded wallet (for cross-chain payouts).
    * It relies on BACKEND_SOLANA_PRIVATE_KEY in the env.
    */
+  async getBackendTreasuryStatus(requiredAmountUSDC = 0) {
+    const backendKeypair = this.getBackendKeypair();
+    const usdcAta = await getAssociatedTokenAddress(this.USDC_MINT, backendKeypair.publicKey);
+    const requiredAmountRaw = BigInt(Math.round(requiredAmountUSDC * 1_000_000));
+    let balanceRaw = BigInt(0);
+    let tokenAccountExists = false;
+
+    try {
+      balanceRaw = await this.getUsdcTokenAccountAmount(
+        usdcAta,
+        backendKeypair.publicKey,
+        "backend treasury",
+      );
+      tokenAccountExists = true;
+    } catch (error: any) {
+      const message = String(error?.message || error || "");
+      if (!message.includes("does not exist")) throw error;
+    }
+
+    return {
+      owner: backendKeypair.publicKey.toBase58(),
+      usdcAta: usdcAta.toBase58(),
+      usdcMint: this.USDC_MINT.toBase58(),
+      balanceRaw: balanceRaw.toString(),
+      balanceUsdc: Number(balanceRaw) / 1_000_000,
+      requiredAmountRaw: requiredAmountRaw.toString(),
+      hasSufficientLiquidity: tokenAccountExists && balanceRaw >= requiredAmountRaw,
+      tokenAccountExists,
+    };
+  }
+
   async executeBackendTransfer(
     recipientPubkey: string,
     amountUSDC: number
   ): Promise<string> {
-    const bs58 = require('bs58');
-    const { Keypair } = require('@solana/web3.js');
-    
-    if (!process.env.BACKEND_SOLANA_PRIVATE_KEY) {
-      console.warn("MOCKING BACKEND TRANSFER: BACKEND_SOLANA_PRIVATE_KEY not set.");
-      // Return a mock signature for demo purposes if no key is configured
-      return `mock_sig_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    }
-
     try {
-      const backendKeypair = Keypair.fromSecretKey(bs58.decode(process.env.BACKEND_SOLANA_PRIVATE_KEY));
+      const backendKeypair = this.getBackendKeypair();
       
       const recipient = new PublicKey(recipientPubkey);
       const amount = BigInt(Math.round(amountUSDC * 1_000_000));
@@ -426,7 +449,17 @@ export class SolanaService {
 
       const tx = new Transaction();
 
-      // Check if recipient ATA exists
+      const treasuryBalance = await this.getUsdcTokenAccountAmount(
+        senderATA,
+        backendKeypair.publicKey,
+        "backend treasury",
+      );
+      if (treasuryBalance < amount) {
+        throw new Error(
+          `Backend Solana treasury has insufficient USDC. Treasury owner ${backendKeypair.publicKey.toBase58()}, ATA ${senderATA.toBase58()}, balance ${treasuryBalance.toString()} raw units, required ${amount.toString()} raw units.`
+        );
+      }
+
       const recipientInfo = await this.connection.getAccountInfo(recipientATA);
       if (!recipientInfo) {
         tx.add(
@@ -436,6 +469,12 @@ export class SolanaService {
             recipient,
             this.USDC_MINT
           )
+        );
+      } else {
+        await this.assertUsdcTokenAccount(
+          recipientATA,
+          recipient,
+          "recipient",
         );
       }
 
@@ -460,7 +499,11 @@ export class SolanaService {
       await this.connection.confirmTransaction(sig, 'confirmed');
       return sig;
     } catch (error) {
-      console.error("Backend transfer failed:", error);
+      const logs = await this.getSendTransactionLogs(error);
+      console.error("Backend transfer failed:", {
+        message: error instanceof Error ? error.message : String(error),
+        logs,
+      });
       throw error;
     }
   }
@@ -576,6 +619,90 @@ export class SolanaService {
       }, BigInt(0));
 
     return sumBalances(meta?.postTokenBalances) - sumBalances(meta?.preTokenBalances);
+  }
+
+  private async getUsdcTokenAccountAmount(
+    tokenAccount: PublicKey,
+    expectedOwner: PublicKey,
+    label: string,
+  ): Promise<bigint> {
+    const account = await this.assertUsdcTokenAccount(tokenAccount, expectedOwner, label);
+    return account.amount;
+  }
+
+  private async assertUsdcTokenAccount(
+    tokenAccount: PublicKey,
+    expectedOwner: PublicKey,
+    label: string,
+  ) {
+    try {
+      const account = await getAccount(
+        this.connection,
+        tokenAccount,
+        "confirmed",
+        TOKEN_PROGRAM_ID,
+      );
+
+      if (!account.owner.equals(expectedOwner)) {
+        throw new Error(
+          `${label} USDC token account owner mismatch. Account ${tokenAccount.toBase58()} is owned by ${account.owner.toBase58()}, expected ${expectedOwner.toBase58()}.`
+        );
+      }
+
+      if (!account.mint.equals(this.USDC_MINT)) {
+        throw new Error(
+          `${label} token account mint mismatch. Account ${tokenAccount.toBase58()} uses mint ${account.mint.toBase58()}, expected USDC mint ${this.USDC_MINT.toBase58()}.`
+        );
+      }
+
+      return account;
+    } catch (error: any) {
+      const message = String(error?.message || error || "");
+      if (
+        message.includes("could not find account") ||
+        message.includes("TokenAccountNotFoundError")
+      ) {
+        throw new Error(
+          `${label} USDC associated token account does not exist. Owner ${expectedOwner.toBase58()}, expected ATA ${tokenAccount.toBase58()}, mint ${this.USDC_MINT.toBase58()}. Fund/create this account before retrying cross-chain payout.`
+        );
+      }
+
+      if (
+        message.includes("Invalid account owner") ||
+        message.includes("TokenInvalidAccountOwnerError")
+      ) {
+        throw new Error(
+          `${label} USDC associated token account ${tokenAccount.toBase58()} exists but is not owned by the SPL Token program.`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  private async getSendTransactionLogs(error: unknown): Promise<string[] | undefined> {
+    if (error instanceof SendTransactionError) {
+      return error.getLogs(this.connection);
+    }
+
+    const maybeError = error as { getLogs?: (connection: Connection) => Promise<string[]> };
+    if (typeof maybeError?.getLogs === "function") {
+      return maybeError.getLogs(this.connection);
+    }
+
+    return undefined;
+  }
+
+  private getBackendKeypair() {
+    const bs58 = require('bs58');
+    const decode = bs58.decode || (bs58.default && bs58.default.decode) || bs58;
+    const { Keypair } = require('@solana/web3.js');
+
+    if (!process.env.BACKEND_SOLANA_PRIVATE_KEY) {
+      throw new Error("BACKEND_SOLANA_PRIVATE_KEY not configured on server.");
+    }
+
+    return Keypair.fromSecretKey(decode(process.env.BACKEND_SOLANA_PRIVATE_KEY));
   }
 
   private u64SeedBuffer(value: bigint): Buffer {

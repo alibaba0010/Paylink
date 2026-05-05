@@ -2,12 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
-import { PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 
+import { getCrossChainLiquidity, verifyCrossChainPayment } from '@/lib/api';
 import { CheckCircle2, ExternalLink, RefreshCw, AlertCircle, ChevronDown } from 'lucide-react';
 
-type Status = 'idle' | 'connecting' | 'sending_evm' | 'done' | 'error';
+type Status = 'idle' | 'connecting' | 'sending_evm' | 'completing' | 'done' | 'error';
 type NetworkId = 'sepolia' | 'avalanche_fuji' | 'sui' | 'hedera';
 
 interface CrossChainPaymentFormProps {
@@ -28,7 +27,6 @@ const EVM_CHAINS = {
   },
   avalanche_fuji: {
     chainId: '0xa869', // 43113
-    domain: 1,
     chainName: 'Avalanche Fuji Testnet',
     rpcUrls: ['https://api.avax-test.network/ext/bc/C/rpc'],
     nativeCurrency: { name: 'AVAX', symbol: 'AVAX', decimals: 18 },
@@ -39,10 +37,6 @@ const EVM_CHAINS = {
 };
 
 type EvmNetworkId = keyof typeof EVM_CHAINS;
-const SOLANA_DOMAIN = 5;
-const SOLANA_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
-const DESTINATION_CALLER_ANY = ethers.ZeroHash;
-const CCTP_STANDARD_TRANSFER_FINALITY_THRESHOLD = 2000;
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
@@ -55,11 +49,11 @@ const TOKEN_MESSENGER_ABI = [
   "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)"
 ];
 
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const DESTINATION_CALLER_ANY = ethers.ZeroHash;
+const CCTP_MAX_FEE = 0;
+const CCTP_MIN_FINALITY_THRESHOLD = 1000;
 
-function solanaAddressToBytes32(address: PublicKey) {
-  return ethers.hexlify(address.toBytes());
-}
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export function CrossChainPaymentForm({
   recipientUsername,
@@ -69,6 +63,7 @@ export function CrossChainPaymentForm({
   const [amount, setAmount] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [solanaTxSig, setSolanaTxSig] = useState('');
 
   const [evmTxHash, setEvmTxHash] = useState('');
   const [evmAccount, setEvmAccount] = useState<string | null>(null);
@@ -219,6 +214,11 @@ export function CrossChainPaymentForm({
 
     try {
       const chainConfig = EVM_CHAINS[network as EvmNetworkId];
+      const liquidity = await getCrossChainLiquidity({ amount_usdc: parsedAmount });
+      if (!liquidity.available || !liquidity.cctp) {
+        throw new Error(liquidity.message || 'Service unavailable at the moment, come back later.');
+      }
+
       const activeAccount = await ensureEvmWalletReady(network as EvmNetworkId);
       console.log('[cross-chain] wallet ready', {
         network,
@@ -254,81 +254,96 @@ export function CrossChainPaymentForm({
       }
 
       const allowance = await usdcContract.allowance(activeAccount, chainConfig.tokenMessengerAddress);
-      console.log('[cross-chain] allowance checked', {
-        network,
-        account: activeAccount,
-        allowanceRaw: allowance.toString(),
-        requiredRaw: amountInUnits.toString(),
-        spender: chainConfig.tokenMessengerAddress,
-      });
       if (allowance < amountInUnits) {
-        console.log('[cross-chain] requesting USDC spending cap approval', {
+        console.log('[cross-chain] approving CCTP burn', {
           network,
-          spender: chainConfig.tokenMessengerAddress,
+          tokenMessenger: chainConfig.tokenMessengerAddress,
           amountRaw: amountInUnits.toString(),
         });
-        const approveTx = await usdcContract.approve(chainConfig.tokenMessengerAddress, amountInUnits);
-        console.log('[cross-chain] approval submitted', { network, txHash: approveTx.hash });
-        const approvalReceipt = await approveTx.wait(1);
-        console.log('[cross-chain] approval confirmed', {
-          network,
-          txHash: approveTx.hash,
-          status: approvalReceipt?.status,
-          blockNumber: approvalReceipt?.blockNumber,
-        });
+        const approvalTx = await usdcContract.approve(chainConfig.tokenMessengerAddress, amountInUnits);
+        await approvalTx.wait(1);
       }
 
-      const recipientAta = getAssociatedTokenAddressSync(
-        SOLANA_USDC_MINT,
-        new PublicKey(recipientWallet)
-      );
-      const mintRecipient = solanaAddressToBytes32(recipientAta);
-      console.log('[cross-chain] prepared CCTP burn', {
-        network,
-        sourceDomain: chainConfig.domain,
-        destinationDomain: SOLANA_DOMAIN,
-        recipientWallet,
-        recipientUsdcTokenAccount: recipientAta.toBase58(),
-        note: 'CCTP mints to the USDC token account (ATA), not the wallet directly',
-        mintRecipientBytes32: mintRecipient,
-        amountRaw: amountInUnits.toString(),
-      });
       const tokenMessenger = new ethers.Contract(
         chainConfig.tokenMessengerAddress,
         TOKEN_MESSENGER_ABI,
-        signer
+        signer,
       );
-      // Standard CCTP transfers use finalized attestation and are fee-free.
-      // Some testnet TokenMessengerV2 deployments do not support getMinFeeAmount.
-      const maxFee = BigInt(0);
-      
+
+      console.log('[cross-chain] prepared CCTP burn', {
+        network,
+        tokenMessenger: chainConfig.tokenMessengerAddress,
+        mintRecipient: liquidity.cctp.mintRecipient,
+        solanaTreasuryOwner: liquidity.solanaTreasury?.owner,
+        solanaTreasuryAta: liquidity.solanaTreasury?.usdcAta,
+        recipientWallet,
+        amountRaw: amountInUnits.toString(),
+      });
+
       const tx = await tokenMessenger.depositForBurn(
         amountInUnits,
-        SOLANA_DOMAIN,
-        mintRecipient,
+        liquidity.cctp.solanaDomain,
+        liquidity.cctp.mintRecipient,
         chainConfig.usdcAddress,
         DESTINATION_CALLER_ANY,
-        maxFee,
-        CCTP_STANDARD_TRANSFER_FINALITY_THRESHOLD
+        CCTP_MAX_FEE,
+        CCTP_MIN_FINALITY_THRESHOLD,
       );
       setEvmTxHash(tx.hash);
-      console.log('[cross-chain] depositForBurn submitted', {
+      console.log('[cross-chain] CCTP burn submitted', {
         network,
         txHash: tx.hash,
         amountRaw: amountInUnits.toString(),
-        recipientAta: recipientAta.toBase58(),
+        tokenMessenger: chainConfig.tokenMessengerAddress,
       });
       
       // Wait for 1 confirmation
-      const burnReceipt = await tx.wait(1);
-      console.log('[cross-chain] depositForBurn confirmed', {
+      const depositReceipt = await tx.wait(1);
+      console.log('[cross-chain] CCTP burn confirmed', {
         network,
         txHash: tx.hash,
-        status: burnReceipt?.status,
-        blockNumber: burnReceipt?.blockNumber,
+        status: depositReceipt?.status,
+        blockNumber: depositReceipt?.blockNumber,
       });
 
-      // Burn confirmed — Circle CCTP will handle the attestation and Solana mint
+      // Burn confirmed — now tell the backend to verify and mirror payout on Solana.
+      setStatus('completing');
+
+      console.log('[cross-chain] burn confirmed, calling backend to complete transfer', {
+        network,
+        txHash: tx.hash,
+        recipientWallet,
+        amount: parsedAmount,
+      });
+
+      let result;
+      let attempt = 0;
+      const maxAttempts = 12; // 12 attempts * 5s = 1 minute
+      
+      while (attempt < maxAttempts) {
+        result = await verifyCrossChainPayment({
+          source_chain: network,
+          tx_hash: tx.hash,
+          recipient_wallet: recipientWallet,
+          amount_usdc: parsedAmount,
+        });
+        console.log('[cross-chain] backend result', result);
+
+        if (result.success && result.status === 'completed') {
+          break;
+        } else if (result.success && result.status === 'pending') {
+          attempt++;
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        } else {
+          throw new Error(result.message || 'Transfer could not be completed');
+        }
+      }
+      
+      if (!result || result.status !== 'completed') {
+        throw new Error('Transfer timed out on the client. Check your transaction history later.');
+      }
+
+      setSolanaTxSig(result.destTxSignature ?? '');
       setStatus('done');
 
     } catch (err: any) {
@@ -365,7 +380,7 @@ export function CrossChainPaymentForm({
           <div className="text-center">
             <p className="text-white font-black uppercase tracking-widest text-sm mb-1">Cross-Chain Success!</p>
             <p className="text-[#8896B3] text-xs mb-3">
-              USDC burned on {network === 'sepolia' ? 'Ethereum' : 'Avalanche'}. Circle CCTP will deliver to recipient on Solana.
+              USDC successfully mirrored from {network === 'sepolia' ? 'Ethereum' : 'Avalanche'} to recipient on Solana.
             </p>
             <div className="flex flex-col gap-2">
               <a
@@ -376,6 +391,16 @@ export function CrossChainPaymentForm({
               >
                 View on {network === 'sepolia' ? 'Etherscan' : 'Snowtrace'} <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </a>
+              {solanaTxSig && (
+                <a
+                  href={`https://solscan.io/tx/${solanaTxSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 text-[#8896B3] text-xs hover:text-[#00C896] transition-colors group"
+                >
+                  View Solana mint <ExternalLink size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -429,14 +454,15 @@ export function CrossChainPaymentForm({
           >
             {status === 'connecting' ? 'Connecting...' :
              status === 'sending_evm' ? <><RefreshCw className="animate-spin" size={18} /> Sending Transaction...</> :
+             status === 'completing' ? <><RefreshCw className="animate-spin" size={18} /> Completing Transfer...</> :
              network === 'sui' || network === 'hedera' ? 'Coming Soon' :
              !evmAccount ? 'Connect EVM Wallet' :
              `Pay ${amount ? `$${amount}` : ''}`}
           </button>
           
           <div className="mt-2 rounded-xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 p-3 text-xs text-[#3B82F6] text-center flex flex-col gap-1">
-            <span className="font-bold uppercase tracking-wider">Cross-Chain Payment 🪄</span>
-            <span className="text-white/60">Pay with {network === 'sepolia' ? 'Ethereum' : network === 'avalanche_fuji' ? 'Avalanche' : 'other'} USDC. Recipient gets Solana USDC via Circle CCTP.</span>
+            <span className="font-bold uppercase tracking-wider">Cross-Chain Payment</span>
+            <span className="text-white/60">Pay with {network === 'sepolia' ? 'Ethereum' : network === 'avalanche_fuji' ? 'Avalanche' : 'other'} USDC. Recipient gets Solana USDC after a CCTP burn is verified.</span>
           </div>
         </>
       )}
