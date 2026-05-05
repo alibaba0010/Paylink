@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:prod": "node dist/index.js",
     "dev": "ts-node-dev src/index.ts"
   },
   "dependencies": {
