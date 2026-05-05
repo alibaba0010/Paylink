@@ -10,6 +10,7 @@ import invoiceRoutes from "./routes/invoices.routes";
 import crossChainRoutes from "./routes/cross-chain.routes";
 import actionsRoutes from "./routes/actions.routes";
 import reputationRoutes from "./routes/reputation.routes";
+import { startHealthWorker } from "./utils/health-worker";
 
 dotenv.config();
 
@@ -51,6 +52,9 @@ const start = async () => {
 
     await server.listen({ port });
     console.log(`PayLink API running on port ${port}`);
+
+    // Start background health worker
+    startHealthWorker();
   } catch (err) {
     server.log.error({ err }, "Failed to start PayLink API");
     process.exit(1);

@@ -93,8 +93,19 @@ export interface ScheduledPaymentClaim {
   } | null;
 }
 
+const getBaseUrl = () => {
+  if (typeof window !== "undefined") {
+    // If user is on HTTPS, use the production API URL
+    if (window.location.protocol === "https:") {
+      return process.env.NEXT_PRODUCTION_API_URL || "https://paylink-zlow.onrender.com";
+    }
+  }
+  // Default to the local/public API URL for HTTP (dev)
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+};
+
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001",
+  baseURL: getBaseUrl(),
 });
 
 export { api };
