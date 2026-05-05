@@ -5,7 +5,7 @@ import { useSolanaBalance } from "@/hooks/useSolanaBalance";
 import { useRecentTransactions } from "@/hooks/useRecentTransactions";
 import Link from "next/link";
 import { getOnboardedUser } from "@/lib/onboarding-storage";
-import { fetchClaimablePayments, fetchReputationScore, type ScheduledPaymentClaim, type UserProfile, type ReputationScore } from "@/lib/api";
+import { fetchClaimablePayments, fetchReputationScore, getAppUrl, type ScheduledPaymentClaim, type UserProfile, type ReputationScore } from "@/lib/api";
 import { CopyValueButton } from "@/components/CopyValueButton";
 import { shortenAddress } from "@/lib/format";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -42,7 +42,7 @@ export default function OverviewPage() {
       .catch(() => setScheduledClaims([]))
       .finally(() => setIsLoadingClaims(false));
   }, [publicKey]);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = getAppUrl();
   const paylinkUrl = user
     ? `${appUrl}/u/${user.username}`
     : "Connect wallet and onboard";

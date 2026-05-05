@@ -104,11 +104,20 @@ const getBaseUrl = () => {
   return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 };
 
+const getAppUrl = () => {
+  if (typeof window !== "undefined") {
+    if (window.location.protocol === "https:") {
+      return process.env.NEXT_PRODUCTION_FRONTEND_URL || "https://paylink-brown.vercel.app";
+    }
+  }
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+};
+
 const api = axios.create({
   baseURL: getBaseUrl(),
 });
 
-export { api };
+export { api, getAppUrl };
 
 // ── User ──────────────────────────────────────────────────────────────────────
 

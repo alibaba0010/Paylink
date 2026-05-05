@@ -29,10 +29,10 @@ export default function Home() {
             <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:mt-10 sm:flex-row">
               <GetStartedButton />
               <Link
-                href="/u/demo"
+                href="/docs"
                 className="rounded-2xl border border-[#1D2E4E] bg-[#0D1B35] px-6 py-4 text-base font-bold text-white transition hover:bg-[#132445] sm:min-w-44"
               >
-                View Demo
+                View Docs
               </Link>
             </div>
 
