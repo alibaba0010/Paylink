@@ -53,7 +53,7 @@ const start = async () => {
     await assertDatabaseConnection();
     server.log.info("Database connection verified");
 
-    await server.listen({ port, host: "[IP_ADDRESS]" });
+    await server.listen({ port, host: "0.0.0.0" });
     console.log(`PayLink API running on port ${port}`);
 
     // Start background health worker
