@@ -1074,12 +1074,20 @@ export class PayrollService {
     return claims.map((claim) => {
       const claimableAt = new Date(claim.claimable_at);
       const isUnlocked = claimableAt.getTime() <= now;
-      const canClaim = ["pending", "claimable"].includes(claim.status) && isUnlocked;
+      
+      // A claim is only truly 'claimable' if the cycle has been funded on-chain.
+      // If it's a legacy claim (no cycle_id), we assume it's claimable if status is correct.
+      const isFunded = claim.cycle_id 
+        ? !!(claim.scheduled_payment_cycles?.employer_signed || claim.scheduled_payment_cycles?.tx_signature)
+        : true;
+
+      const canClaim = ["pending", "claimable"].includes(claim.status) && isUnlocked && isFunded;
 
       return {
         ...claim,
         can_claim: canClaim,
         is_locked: ["pending", "claimable"].includes(claim.status) && !isUnlocked,
+        is_unfunded: ["pending", "claimable"].includes(claim.status) && isUnlocked && !isFunded,
       };
     });
   }

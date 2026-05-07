@@ -79,6 +79,7 @@ export interface ScheduledPaymentClaim {
   created_at: string;
   can_claim: boolean;
   is_locked: boolean;
+  is_unfunded?: boolean;
   scheduled_payment_cycles: {
     due_at: string;
     cycle_number?: number;

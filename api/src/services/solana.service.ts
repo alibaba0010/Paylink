@@ -552,16 +552,8 @@ export class SolanaService {
         return instructions;
       }
 
-      // Only block if we're creating another legacy (non-cycle) escrow.
-      // Cycle-based escrows (escrowId > 0) use a different PDA and can coexist
-      // with the legacy escrow on-chain without conflict.
-      if (escrowId === BigInt(0)) {
-        throw new Error(
-          `Legacy escrow account ${legacyState.address} already holds funds for this worker. Refund, claim, or migrate that escrow before funding the next cycle.`,
-        );
-      }
-
-      // Warn but don't block — the new cycle escrow uses a different address
+      // Warn but don't block — the new cycle escrow uses a different address (PDA)
+      // and can coexist with the legacy escrow on-chain.
       console.warn(
         `[escrow] Legacy escrow ${legacyState.address} still has unclaimed funds for worker ${worker.toBase58()}, but proceeding with cycle-based escrow (escrowId=${escrowId}).`,
       );

@@ -105,48 +105,37 @@ export default function PaymentsPage() {
       throw new Error('Wallet not connected');
     }
 
-    const latest = await connection.getLatestBlockhash('confirmed');
-    tx.feePayer = publicKey;
-    tx.recentBlockhash = latest.blockhash;
+    // Preserve existing signatures (e.g. for gasless claims)
+    const isPartiallySigned = tx.signatures.some(s => s.signature !== null);
+
+    if (!isPartiallySigned) {
+      const latest = await connection.getLatestBlockhash('confirmed');
+      if (!tx.feePayer) tx.feePayer = publicKey;
+      if (!tx.recentBlockhash) tx.recentBlockhash = latest.blockhash;
+    }
 
     try {
       if (signTransaction) {
         const signedTx = await signTransaction(tx);
-        const derivedSigBytes =
-          signedTx.signature ??
-          signedTx.signatures.find(({ publicKey: signer }) => signer.equals(publicKey))?.signature ??
-          signedTx.signatures[0]?.signature ??
-          null;
+        
+        // Extract signature for backend/UI tracking
+        const userSigBytes = signedTx.signatures.find(s => s.publicKey.equals(publicKey))?.signature;
+        const derivedSig = userSigBytes ? bs58.encode(userSigBytes) : null;
 
-        const derivedSig = derivedSigBytes ? bs58.encode(derivedSigBytes) : null;
-
-        let sig = derivedSig;
-
-        try {
-          sig = await connection.sendRawTransaction(signedTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: 3,
-          });
-        } catch (err: any) {
-          const alreadyProcessed = String(err?.message || '').includes('already been processed');
-          if (!alreadyProcessed || !derivedSig) {
-            throw err;
-          }
-          sig = derivedSig;
-        }
-
-        if (!sig) {
-          throw new Error('Signed transaction signature could not be derived');
-        }
+        const wireTx = signedTx.serialize();
+        const txSig = await connection.sendRawTransaction(wireTx, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: 3,
+        });
 
         await connection.confirmTransaction({
-          signature: sig,
-          blockhash: latest.blockhash,
-          lastValidBlockHeight: latest.lastValidBlockHeight,
+          signature: txSig,
+          blockhash: tx.recentBlockhash!,
+          lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight,
         }, 'confirmed');
 
-        return sig;
+        return txSig;
       }
 
       const sig = await sendTransaction(tx, connection, {
@@ -155,12 +144,7 @@ export default function PaymentsPage() {
         maxRetries: 3,
       });
 
-      await connection.confirmTransaction({
-        signature: sig,
-        blockhash: latest.blockhash,
-        lastValidBlockHeight: latest.lastValidBlockHeight,
-      }, 'confirmed');
-
+      await connection.confirmTransaction(sig, 'confirmed');
       return sig;
     } catch (err: any) {
       const logs = err instanceof SendTransactionError
@@ -361,7 +345,11 @@ export default function PaymentsPage() {
 
       setIncomingClaims(prev => prev.map(c => c.id === claimId ? { ...c, status: 'claimed' } : c));
     } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to claim payment');
+      let msg = err?.response?.data?.message || err?.message || 'Failed to claim payment';
+      if (msg.includes("AccountNotInitialized")) {
+        msg = "Payment account not found. The employer may not have funded this cycle yet.";
+      }
+      setErrorMsg(msg);
     } finally {
       setClaimingClaimId(null);
     }
@@ -391,11 +379,13 @@ export default function PaymentsPage() {
     : isCycleFunded
       ? 'Funded'
       : isCycleExpired
-        ? 'Ready for funding'
-        : 'Ready for funding';
+        ? 'Funding Overdue'
+        : 'Awaiting Funding';
   const payrollStatusTone = isCycleFunded
     ? 'text-[#00C896]'
-    : 'text-amber-400';
+    : isCycleExpired
+      ? 'text-[#FF5F82]'
+      : 'text-amber-400';
 
   return (
     <div className="flex flex-col gap-8">
@@ -614,6 +604,7 @@ export default function PaymentsPage() {
                     const statusLabel =
                       isClaimed ? 'Claimed' :
                       isCancelled ? 'Rejected' :
+                      claim.is_unfunded ? 'Waiting for employer funding' :
                       claim.can_claim ? 'Ready to claim' :
                       `Locked until ${unlockDate.toLocaleDateString()}`;
                     return (
@@ -628,10 +619,11 @@ export default function PaymentsPage() {
                           <span className={`self-start rounded-full px-2 py-1 text-[10px] font-bold sm:self-auto ${
                             isClaimed ? 'bg-[#00C896]/20 text-[#00C896]' :
                             isCancelled ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
+                            claim.is_unfunded ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
                             claim.can_claim ? 'bg-amber-500/20 text-amber-400' :
                             'bg-[#1A2235] text-[#8896B3]'
                           }`}>
-                            {isClaimed ? 'Claimed' : isCancelled ? 'Rejected' : claim.can_claim ? 'Available' : 'Locked'}
+                            {isClaimed ? 'Claimed' : isCancelled ? 'Rejected' : claim.is_unfunded ? 'Unfunded' : claim.can_claim ? 'Available' : 'Locked'}
                           </span>
                           {claim.can_claim && !isClaimed && !isCancelled && (
                             <button

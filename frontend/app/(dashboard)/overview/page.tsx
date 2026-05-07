@@ -63,32 +63,49 @@ export default function OverviewPage() {
 
   const submitWalletTransaction = useCallback(async (tx: Transaction) => {
     if (!publicKey) throw new Error('Wallet not connected');
-    const latest = await connection.getLatestBlockhash('confirmed');
-    tx.feePayer = publicKey;
-    tx.recentBlockhash = latest.blockhash;
+
+    // For gasless claims, the backend already set feePayer and recentBlockhash,
+    // and signed as feePayer. We MUST NOT override these or we wipe the signature.
+    const isPartiallySigned = tx.signatures.some(s => s.signature !== null);
+
+    if (!isPartiallySigned) {
+      const latest = await connection.getLatestBlockhash('confirmed');
+      if (!tx.feePayer) tx.feePayer = publicKey;
+      if (!tx.recentBlockhash) tx.recentBlockhash = latest.blockhash;
+    }
+
     try {
       if (signTransaction) {
         const signedTx = await signTransaction(tx);
-        const derivedSigBytes =
-          signedTx.signature ??
-          signedTx.signatures.find(({ publicKey: signer }) => signer.equals(publicKey))?.signature ??
-          signedTx.signatures[0]?.signature ?? null;
-        const derivedSig = derivedSigBytes ? bs58.encode(derivedSigBytes) : null;
-        let sig = derivedSig;
-        try {
-          sig = await connection.sendRawTransaction(signedTx.serialize(), {
-            skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3,
-          });
-        } catch (err: any) {
-          if (!String(err?.message || '').includes('already been processed') || !derivedSig) throw err;
-          sig = derivedSig;
-        }
-        if (!sig) throw new Error('Signed transaction signature could not be derived');
-        await connection.confirmTransaction({ signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed');
-        return sig;
+        
+        // Extract signature for backend confirmation
+        // It's the one corresponding to the first signer usually, 
+        // but we want the one from the user (publicKey).
+        const userSignature = signedTx.signatures.find(s => s.publicKey.equals(publicKey))?.signature;
+        const sig = userSignature ? bs58.encode(userSignature) : null;
+        
+        if (!sig) throw new Error('Failed to capture wallet signature');
+
+        // We use serialize({ requireAllSignatures: false }) if we expect the backend 
+        // to sign later, but here the backend ALREADY signed as fee payer.
+        // So requireAllSignatures should be true for the final broadcast.
+        const wireTx = signedTx.serialize();
+        const txSig = await connection.sendRawTransaction(wireTx, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: 3,
+        });
+        
+        await connection.confirmTransaction({ 
+          signature: txSig, 
+          blockhash: tx.recentBlockhash!, 
+          lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight // estimate or fetch
+        }, 'confirmed');
+        return txSig;
       }
+      
       const sig = await sendTransaction(tx, connection, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 });
-      await connection.confirmTransaction({ signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, 'confirmed');
+      await connection.confirmTransaction(sig, 'confirmed');
       return sig;
     } catch (err: any) {
       const message = err?.cause?.message || err?.message || 'Wallet failed to sign and send the transaction';
@@ -110,7 +127,11 @@ export default function OverviewPage() {
       setScheduledClaims(prev => prev.map(c => c.id === claimId ? { ...c, status: 'claimed', can_claim: false } : c));
       setClaimSuccess('Funds claimed successfully! ✅');
     } catch (err: any) {
-      setClaimError(err?.response?.data?.message || err?.message || 'Failed to claim payment');
+      let msg = err?.response?.data?.message || err?.message || 'Failed to claim payment';
+      if (msg.includes("AccountNotInitialized")) {
+        msg = "Payment account not found. The employer may not have funded this cycle yet.";
+      }
+      setClaimError(msg);
     } finally {
       setClaimingClaimId(null);
     }
@@ -243,6 +264,7 @@ export default function OverviewPage() {
               const statusLabel =
                 isClaimed ? "Claimed" :
                 isCancelled ? "Rejected" :
+                claim.is_unfunded ? "Waiting for employer funding" :
                 claim.can_claim ? "Ready to claim" :
                 `Locked until ${unlockDate.toLocaleDateString()}`;
 
@@ -258,10 +280,11 @@ export default function OverviewPage() {
                     <span className={`self-start rounded-full px-3 py-1 text-xs font-bold sm:self-auto ${
                       isClaimed ? "bg-[#00C896]/10 text-[#00C896]" :
                       isCancelled ? "bg-[#FF5F82]/10 text-[#FF5F82]" :
+                      claim.is_unfunded ? "bg-[#FF5F82]/10 text-[#FF5F82]" :
                       claim.can_claim ? "bg-amber-500/10 text-amber-300" :
                       "bg-[#1A2235] text-[#8896B3]"
                     }`}>
-                      {isClaimed ? "Claimed" : isCancelled ? "Rejected" : claim.can_claim ? "Available" : "Locked"}
+                      {isClaimed ? "Claimed" : isCancelled ? "Rejected" : claim.is_unfunded ? "Unfunded" : claim.can_claim ? "Available" : "Locked"}
                     </span>
                     {claim.can_claim && !isClaimed && !isCancelled && (
                       <button
