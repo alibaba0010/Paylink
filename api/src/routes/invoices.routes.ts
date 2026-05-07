@@ -67,6 +67,25 @@ export default async function invoiceRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // PUT /invoices/:id
+  fastify.put("/invoices/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as any;
+
+    if (!body.creator_wallet) {
+      return reply.code(400).send({ success: false, message: "creator_wallet is required" });
+    }
+
+    try {
+      const invoice = await invoiceService.updateInvoice(id, body);
+      return { success: true, invoice };
+    } catch (error: any) {
+      if (error instanceof InvoiceInputError) return reply.code(400).send({ success: false, message: error.message });
+      if (error instanceof DatabaseConnectionError) return reply.code(503).send({ success: false, message: error.message });
+      throw error;
+    }
+  });
+
   // PATCH /invoices/:id/status
   fastify.patch("/invoices/:id/status", async (request, reply) => {
     const { id } = request.params as { id: string };

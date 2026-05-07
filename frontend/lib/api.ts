@@ -575,6 +575,23 @@ export async function fetchInvoices(creator_wallet: string) {
   return data.invoices;
 }
 
+export async function updateInvoice(id: string, payload: {
+  creator_wallet: string;
+  title?: string;
+  description?: string;
+  payer_email?: string;
+  payer_name?: string;
+  due_date?: string;
+  items?: {
+    description: string;
+    quantity: number;
+    unit_price: number;
+  }[];
+}) {
+  const { data } = await api.put<{ success: boolean; invoice: Invoice }>(`/invoices/${id}`, payload);
+  return data.invoice;
+}
+
 export async function fetchInvoice(idOrNumber: string) {
   const { data } = await api.get<{ success: boolean; invoice: Invoice }>(`/invoices/${idOrNumber}`);
   return data.invoice;

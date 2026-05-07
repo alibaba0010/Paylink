@@ -70,6 +70,20 @@ export interface CreateInvoiceInput {
   }[];
 }
 
+export interface UpdateInvoiceInput {
+  creator_wallet: string;
+  title?: string;
+  description?: string;
+  payer_email?: string;
+  payer_name?: string;
+  due_date?: string;
+  items?: {
+    description: string;
+    quantity: number;
+    unit_price: number;
+  }[];
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function validateWallet(addr: string, ctx = "Wallet address"): string {
@@ -165,6 +179,82 @@ export class InvoiceService {
       items: (items || []).map(this.normalizeItem),
       comments: [],
     };
+  }
+
+  /** Update an existing invoice. */
+  async updateInvoice(invoiceId: string, input: UpdateInvoiceInput): Promise<Invoice> {
+    const wallet = validateWallet(input.creator_wallet, "Creator wallet");
+
+    const { data: creator } = await supabase
+      .from("users").select("id").eq("wallet_address", wallet).single();
+    if (!creator)
+      throw new InvoiceInputError("Creator wallet not found");
+
+    const { data: inv } = await supabase
+      .from("invoices").select("*")
+      .eq("id", invoiceId).single();
+    if (!inv) throw new InvoiceInputError("Invoice not found");
+    if (inv.creator_id !== creator.id)
+      throw new InvoiceInputError("Access denied");
+    if (inv.status === "paid")
+      throw new InvoiceInputError("Cannot edit a paid invoice");
+
+    const updateData: any = {};
+    if (input.title) updateData.title = input.title.trim();
+    if (input.description !== undefined) updateData.description = input.description?.trim() || null;
+    if (input.payer_email !== undefined) updateData.payer_email = input.payer_email?.trim() || null;
+    if (input.payer_name !== undefined) updateData.payer_name = input.payer_name?.trim() || null;
+    if (input.due_date !== undefined) updateData.due_date = input.due_date || null;
+
+    let totalUsdc = inv.total_usdc;
+
+    if (input.items) {
+      if (input.items.length === 0)
+        throw new InvoiceInputError("At least one line item is required");
+
+      for (let i = 0; i < input.items.length; i++) {
+        const item = input.items[i];
+        if (!item.description?.trim())
+          throw new InvoiceInputError(`Item ${i + 1}: description is required`);
+        if (item.quantity <= 0)
+          throw new InvoiceInputError(`Item ${i + 1}: quantity must be > 0`);
+        if (item.unit_price < 0)
+          throw new InvoiceInputError(`Item ${i + 1}: unit price cannot be negative`);
+      }
+      totalUsdc = input.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+      updateData.total_usdc = totalUsdc;
+    }
+
+    // Update invoice header
+    const { data: updatedInvoice, error: updateErr } = await supabase
+      .from("invoices")
+      .update(updateData)
+      .eq("id", invoiceId)
+      .select("*")
+      .single();
+
+    if (updateErr || !updatedInvoice)
+      throw new DatabaseConnectionError(updateErr?.message || "Failed to update invoice");
+
+    // Update items if provided
+    if (input.items) {
+      // Simplest way to "update" items is to delete and re-insert
+      await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
+
+      const itemRows = input.items.map((item) => ({
+        invoice_id: invoiceId,
+        description: item.description.trim(),
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        amount_usdc: item.quantity * item.unit_price,
+      }));
+
+      const { error: itemsErr } = await supabase.from("invoice_items").insert(itemRows);
+      if (itemsErr) throw new DatabaseConnectionError(itemsErr.message || "Failed to update items");
+    }
+
+    // Fetch final state with items and comments
+    return this.getInvoice(invoiceId) as Promise<Invoice>;
   }
 
   /** List invoices for a creator. */

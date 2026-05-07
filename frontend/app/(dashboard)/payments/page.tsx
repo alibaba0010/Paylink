@@ -380,11 +380,19 @@ export default function PaymentsPage() {
     cycleLockDate &&
     cycleLockDate > new Date()
   );
+  const isCycleExpired = !!(
+    selectedPayroll?.frequency &&
+    cycleLockDate &&
+    cycleLockDate <= new Date() &&
+    !selectedPayroll.escrow_funded
+  );
   const payrollStatusLabel = !selectedPayroll?.frequency
     ? 'Not scheduled'
     : isCycleFunded
       ? 'Funded'
-      : 'Waiting for payment approval';
+      : isCycleExpired
+        ? 'Ready for funding'
+        : 'Ready for funding';
   const payrollStatusTone = isCycleFunded
     ? 'text-[#00C896]'
     : 'text-amber-400';

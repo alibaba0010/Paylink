@@ -250,7 +250,7 @@ export function CrossChainPaymentForm({
         usdc: chainConfig.usdcAddress,
       });
       if (balance < amountInUnits) {
-        throw new Error(`Insufficient USDC balance on ${chainConfig.chainName}. You need at least ${parsedAmount} USDC.`);
+        throw new Error(`balance too low to complete this payment. Your balance: ${ethers.formatUnits(balance, 6)} USDC`);
       }
 
       const allowance = await usdcContract.allowance(activeAccount, chainConfig.tokenMessengerAddress);
