@@ -714,15 +714,18 @@ export class SolanaService {
   }
 
   private findEscrowPDA(employer: PublicKey, workerUsdcATA: PublicKey, escrowId: bigint): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync(
-      [
-        Buffer.from('escrow'),
-        employer.toBuffer(),
-        workerUsdcATA.toBuffer(),
-        this.u64SeedBuffer(escrowId),
-      ],
-      this.program.programId,
-    );
+    const seeds = [
+      Buffer.from('escrow'),
+      employer.toBuffer(),
+      workerUsdcATA.toBuffer(),
+    ];
+
+    // Legacy escrows (ID 0) do not use the extra escrowId seed.
+    if (escrowId !== BigInt(0)) {
+      seeds.push(this.u64SeedBuffer(escrowId));
+    }
+
+    return PublicKey.findProgramAddressSync(seeds, this.program.programId);
   }
 
   private async getCycleEscrowState(

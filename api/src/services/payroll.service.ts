@@ -375,10 +375,23 @@ export class PayrollService {
       throw new PayrollInputError("Activate a payment schedule before funding escrow");
     }
 
-    const nextRunAt = new Date(payroll.next_run_at);
-    if (payroll.escrow_funded && nextRunAt > new Date()) {
-      throw new PayrollInputError(`Escrow is already funded until ${nextRunAt.toISOString()}`);
+    // Find the specific cycle to fund. We target the earliest unfunded cycle.
+    const { data: cycle } = await supabase
+      .from("scheduled_payment_cycles")
+      .select("id, due_at")
+      .eq("payroll_id", payrollId)
+      .eq("employer_signed", false)
+      .order("due_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (!cycle) {
+      throw new PayrollInputError("No pending payout cycles found for this group. Check if already funded or create a new cycle.");
     }
+
+    const nextRunAt = new Date(cycle.due_at);
+    // Force 0ms for on-chain consistency
+    nextRunAt.setMilliseconds(0);
 
     const members = await this.fetchPayrollMembers(payrollId);
 
@@ -430,10 +443,21 @@ export class PayrollService {
       throw new PayrollInputError("Activate a payment schedule before funding escrow");
     }
 
-    const nextRunAt = new Date(payroll.next_run_at);
-    if (payroll.escrow_funded && nextRunAt > new Date()) {
-      throw new PayrollInputError(`Escrow is already funded until ${nextRunAt.toISOString()}`);
-    }
+    // Find the specific cycle we are confirming funding for.
+    const { data: cycle } = await supabase
+      .from("scheduled_payment_cycles")
+      .select("id, due_at")
+      .eq("payroll_id", payrollId)
+      .eq("employer_signed", false)
+      .order("due_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (!cycle) throw new PayrollInputError("No pending payout cycles found to confirm.");
+
+    const cycleDueAt = new Date(cycle.due_at);
+    cycleDueAt.setMilliseconds(0);
+    const unlockTime = Math.floor(cycleDueAt.getTime() / 1000);
 
     if (!txSignatures.length) {
       const members = await this.fetchPayrollMembers(payrollId);
@@ -444,7 +468,7 @@ export class PayrollService {
           wallet_address: member.wallet_address,
           amount_usdc: Number(member.amount_usdc),
         })),
-        Math.floor(nextRunAt.getTime() / 1000),
+        unlockTime,
       );
 
       if (!isFundedOnChain) {
@@ -452,6 +476,17 @@ export class PayrollService {
       }
     }
 
+    // Mark the cycle itself as signed/funded
+    await supabase
+      .from("scheduled_payment_cycles")
+      .update({
+        employer_signed: true,
+        tx_signature: txSignatures.length ? txSignatures[0] : "verified",
+        status: "signed",
+      })
+      .eq("id", cycle.id);
+
+    // Also update the global flag on the schedule (legacy compatibility)
     const { error: updateErr } = await supabase
       .from("payroll_schedules")
       .update({
@@ -792,7 +827,7 @@ export class PayrollService {
     const now = new Date();
     const { data: claim } = await supabase
       .from("scheduled_payment_claims")
-      .select("id, claimable_at, status, wallet_address, amount_usdc, cycle_id, scheduled_payment_cycles(due_at, payroll_schedules(employer_id))")
+      .select("id, claimable_at, status, wallet_address, amount_usdc, cycle_id, scheduled_payment_cycles(due_at, payroll_schedules(employer_id)), payroll_schedules(employer_id)")
       .eq("id", claimId).single() as any;
 
     if (!claim) throw new PayrollInputError("Claim not found");
@@ -800,18 +835,23 @@ export class PayrollService {
     if (!["pending", "claimable"].includes(claim.status)) throw new PayrollInputError(`Claim is ${claim.status}`);
     if (new Date(claim.claimable_at) > now) throw new PayrollInputError("Funds not yet available");
 
-    const employerId = claim.scheduled_payment_cycles?.payroll_schedules?.employer_id;
+    // Handle legacy claims (no cycle_id)
+    const cycle = claim.scheduled_payment_cycles;
+    const employerId = cycle?.payroll_schedules?.employer_id || claim.payroll_schedules?.employer_id;
     if (!employerId) throw new PayrollInputError("Employer not found for this claim");
 
     const { data: employer } = await supabase
       .from("users").select("wallet_address").eq("id", employerId).single();
     if (!employer) throw new PayrollInputError("Employer wallet not found");
 
+    // Normalize unlockTime: Cycle claims use their due_at timestamp. Legacy claims use 0.
+    const unlockTime = cycle ? Math.floor(new Date(cycle.due_at).getTime() / 1000) : 0;
+
     const solana = new SolanaService();
     return solana.buildGaslessClaimEscrow(
       employer.wallet_address,
       workerWallet,
-      Math.floor(new Date(claim.scheduled_payment_cycles.due_at).getTime() / 1000)
+      unlockTime
     );
   }
 
@@ -1089,7 +1129,7 @@ export class PayrollService {
         is_locked: ["pending", "claimable"].includes(claim.status) && !isUnlocked,
         is_unfunded: ["pending", "claimable"].includes(claim.status) && isUnlocked && !isFunded,
       };
-    });
+    }).filter(c => !c.is_unfunded || c.status === 'claimed'); // Hide unfunded claims per user request
   }
 
   private toPayroll(row: any, members: PayrollMember[], cycles: any[]): Payroll {
