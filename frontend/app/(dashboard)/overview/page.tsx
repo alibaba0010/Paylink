@@ -5,15 +5,14 @@ import { useSolanaBalance } from "@/hooks/useSolanaBalance";
 import { useRecentTransactions } from "@/hooks/useRecentTransactions";
 import Link from "next/link";
 import { getOnboardedUser } from "@/lib/onboarding-storage";
-import { fetchClaimablePayments, fetchReputationScore, getAppUrl, claimPayment, requestGaslessClaim, type ScheduledPaymentClaim, type UserProfile, type ReputationScore } from "@/lib/api";
 import { CopyValueButton } from "@/components/CopyValueButton";
 import { shortenAddress } from "@/lib/format";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
-import { SendTransactionError } from "@solana/web3.js";
 import { ReputationBadge } from "@/components/ReputationBadge";
-import { Loader2, CheckCircle2, AlertTriangle, Wallet } from "lucide-react";
+import { Loader2, CheckCircle2, AlertTriangle, Wallet, FileText, Users, Briefcase, Globe, Send, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import { fetchClaimablePayments, fetchReputationScore, getAppUrl, claimPayment, requestGaslessClaim, fetchPaymentHistory, type ScheduledPaymentClaim, type UserProfile, type ReputationScore, type PaymentHistoryItem } from "@/lib/api";
 
 export default function OverviewPage() {
   const { publicKey, sendTransaction, signTransaction } = useWallet();
@@ -28,6 +27,8 @@ export default function OverviewPage() {
   const [claimingClaimId, setClaimingClaimId] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [paymentHistory, setPaymentHistory] = useState<PaymentHistoryItem[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   useEffect(() => {
     const u = getOnboardedUser();
@@ -49,6 +50,15 @@ export default function OverviewPage() {
       .then(setScheduledClaims)
       .catch(() => setScheduledClaims([]))
       .finally(() => setIsLoadingClaims(false));
+
+    setIsHistoryLoading(true);
+    fetchPaymentHistory(wallet)
+      .then(setPaymentHistory)
+      .catch(err => {
+        console.error("History fetch error:", err);
+        setPaymentHistory([]);
+      })
+      .finally(() => setIsHistoryLoading(false));
   }, [publicKey]);
 
   const submitWalletTransaction = useCallback(async (tx: Transaction) => {
@@ -275,43 +285,128 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[#1A2235] bg-[#0D1B35] p-5 sm:p-6">
-        <h3 className="font-semibold mb-4 text-lg text-white">
-          Recent Activity
-        </h3>
-        <div className="flex flex-col gap-4">
-          {isTxsLoading ? (
-            <p className="text-sm text-[#8896B3]">Loading transactions...</p>
+      <div className="rounded-2xl border border-[#1A2235] bg-[#0D1B35] p-5 sm:p-8">
+        <div className="flex items-center justify-between mb-8">
+          <h3 className="font-bold text-xl text-white">
+            Recent Activity
+          </h3>
+          {!isHistoryLoading && paymentHistory.length > 0 && (
+            <span className="text-[10px] font-black uppercase tracking-widest text-[#4E638A] bg-white/5 px-3 py-1 rounded-full">
+              Structured Log
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          {isHistoryLoading ? (
+            <div className="py-12 flex flex-col items-center justify-center text-[#4E638A] gap-4">
+               <Loader2 className="animate-spin" size={32} />
+               <p className="text-sm font-bold uppercase tracking-widest">Compiling history...</p>
+            </div>
+          ) : paymentHistory.length > 0 ? (
+            paymentHistory.map((pmt) => {
+              const isSent = pmt.sender_wallet === publicKey?.toBase58();
+              
+              const typeConfig: Record<string, { label: string; icon: any; color: string }> = {
+                invoice: { label: 'Invoice Payment', icon: FileText, color: '#3B82F6' },
+                bulk_direct: { label: 'Bulk Transfer', icon: Users, color: '#A855F7' },
+                payroll: { label: 'Payroll Claim', icon: Briefcase, color: '#EAB308' },
+                cross_chain: { label: 'Cross-Chain', icon: Globe, color: '#00C896' },
+                single: { label: 'Direct Payment', icon: Send, color: '#6366F1' },
+              };
+
+              const config = typeConfig[pmt.payment_type] || { label: 'Transaction', icon: Wallet, color: '#8896B3' };
+              const Icon = config.icon;
+
+              return (
+                <div
+                  key={pmt.id}
+                  className="group flex flex-col gap-4 p-4 -mx-4 rounded-2xl hover:bg-white/[0.02] transition-all sm:flex-row sm:items-center border-b border-white/[0.03] last:border-0"
+                >
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div 
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border border-white/5 transition-all group-hover:scale-110"
+                      style={{ backgroundColor: `${config.color}15`, color: config.color }}
+                    >
+                      <Icon size={24} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-sm font-bold text-white group-hover:text-[#00C896] transition-colors">{config.label}</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-white/5 text-[#4E638A]">
+                          {pmt.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-[#4E638A] font-medium">
+                        {isSent ? (
+                          <>
+                            <ArrowUpRight size={12} className="text-[#FF5F82]" />
+                            <span className="truncate">Sent to {pmt.recipient?.display_name || shortenAddress(pmt.recipient?.wallet_address || 'Unknown')}</span>
+                          </>
+                        ) : (
+                          <>
+                            <ArrowDownLeft size={12} className="text-[#00C896]" />
+                            <span>Received funds</span>
+                          </>
+                        )}
+                        <span className="text-white/5">•</span>
+                        <span>{new Date(pmt.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between sm:justify-end gap-6 pl-16 sm:pl-0">
+                    <div className="text-right">
+                      <p className={`text-lg font-black ${isSent ? 'text-white' : 'text-[#00C896]'}`}>
+                        {isSent ? '-' : '+'}${Number(pmt.amount_usdc).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      <a 
+                        href={`https://solscan.io/tx/${pmt.tx_signature}?cluster=devnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] font-black uppercase tracking-widest text-[#4E638A] hover:text-white transition-colors block"
+                      >
+                        View Sig
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
           ) : transactions && transactions.length > 0 ? (
-            transactions.map((tx: any) => (
-              <div
-                key={tx.signature}
-                className="flex flex-col gap-2 border-b border-[#1A2235] pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="flex flex-col">
-                  <a
-                    href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm font-medium text-[#00C896] hover:underline truncate max-w-[200px] sm:max-w-xs"
-                  >
-                    {tx.signature}
-                  </a>
-                  <span className="text-xs text-[#8896B3]">{tx.time}</span>
+             <div className="flex flex-col gap-4 opacity-60">
+               {transactions.map((tx: any) => (
+                <div
+                  key={tx.signature}
+                  className="flex flex-col gap-2 border-b border-[#1A2235] pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex flex-col">
+                    <a
+                      href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium text-[#00C896] hover:underline truncate max-w-[200px] sm:max-w-xs"
+                    >
+                      {tx.signature}
+                    </a>
+                    <span className="text-xs text-[#8896B3]">{tx.time}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full ${tx.status === "Success" ? "bg-[#00C896]/10 text-[#00C896]" : "bg-[#FF5F82]/10 text-[#FF5F82]"}`}
+                    >
+                      {tx.status}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full ${tx.status === "Success" ? "bg-[#00C896]/10 text-[#00C896]" : "bg-[#FF5F82]/10 text-[#FF5F82]"}`}
-                  >
-                    {tx.status}
-                  </span>
-                </div>
-              </div>
-            ))
+              ))}
+             </div>
           ) : (
-            <p className="text-sm text-[#8896B3]">
-              No recent transactions found for this wallet.
-            </p>
+            <div className="py-12 text-center bg-white/[0.01] rounded-3xl border border-dashed border-white/5">
+              <p className="text-sm text-[#4E638A] font-bold uppercase tracking-widest">
+                No recent activity recorded.
+              </p>
+            </div>
           )}
         </div>
       </div>

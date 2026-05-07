@@ -237,88 +237,95 @@ export default function PublicInvoicePage({ params }: { params: Promise<{ id: st
   const canPay = (invoice.status === 'sent' || invoice.status === 'viewed') && !isCreator;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#112B4A_0%,_#0A0F1E_45%,_#050814_100%)] px-4 py-8 sm:px-6">
-      <div className="mx-auto flex min-h-screen max-w-5xl flex-col">
-        <div className="mb-8 flex justify-center sm:justify-start">
-          <BrandLogo />
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#112B4A_0%,_#0A0F1E_45%,_#050814_100%)] px-4 py-12 sm:px-6">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col">
+        <div className="mb-12 flex items-center justify-between">
+          <BrandLogo className="scale-110 origin-left" />
+          {!connected && <WalletConnectButton className="!rounded-2xl !bg-white/5 !border !border-white/10 !text-white hover:!bg-white/10 transition-all !px-6" />}
         </div>
 
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)] lg:items-start">
+        <div className="grid flex-1 gap-8 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
           
           {/* ── Left Col: Invoice Details ────────────────────────────────────── */}
-          <section className="rounded-[32px] border border-white/10 bg-white/5 p-6 backdrop-blur sm:p-10">
+          <section className="rounded-[40px] border border-white/10 bg-white/[0.02] p-6 backdrop-blur-2xl sm:p-12 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-[#00C896]/5 blur-[100px] rounded-full -mr-32 -mt-32 pointer-events-none group-hover:bg-[#00C896]/10 transition-all duration-700" />
+            
             {isEditing ? (
-              <div className="space-y-8 animate-in fade-in duration-300">
-                <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-6">
+              <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 relative z-10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-white/5 pb-8">
                   <div className="flex-1">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-[#4E638A] mb-1 block">Invoice Title</label>
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#4E638A] mb-2 block">Invoice Title</label>
                     <input
                       type="text"
                       value={editTitle}
                       onChange={e => setEditTitle(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white font-bold outline-none focus:border-[#00C896] transition-colors"
+                      className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 py-4 text-white text-2xl font-bold outline-none focus:border-[#00C896] focus:bg-white/[0.05] transition-all shadow-inner"
                     />
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setIsEditing(false)} className="h-12 px-4 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">
-                      <X size={18} />
+                  <div className="flex gap-3">
+                    <button onClick={() => setIsEditing(false)} className="h-14 px-6 rounded-2xl border border-white/10 text-white hover:bg-white/5 transition-all active:scale-95 flex items-center gap-2">
+                      <X size={20} />
+                      <span className="font-bold">Cancel</span>
                     </button>
                     <button
                       onClick={handleSaveEdit}
                       disabled={isSaving}
-                      className="h-12 px-6 rounded-xl bg-[#00C896] text-[#0A0F1E] font-bold hover:bg-[#00B085] transition-colors flex items-center gap-2"
+                      className="h-14 px-8 rounded-2xl bg-gradient-to-r from-[#00C896] to-[#00E5AC] text-[#0A0F1E] font-black hover:shadow-[0_0_30px_rgba(0,200,150,0.4)] transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
                     >
-                      {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                      {isSaving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
                       Save Changes
                     </button>
                   </div>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-8">
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-[#4E638A] mb-3 font-bold">Billed To (Name)</p>
+                <div className="grid sm:grid-cols-2 gap-10">
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#4E638A] font-black">Billed To (Name)</p>
                     <input
                       type="text"
                       value={editPayerName}
                       onChange={e => setEditPayerName(e.target.value)}
                       placeholder="Client Name"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-[#00C896] transition-colors"
+                      className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 py-3.5 text-white outline-none focus:border-[#00C896] transition-all"
                     />
                   </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-[#4E638A] mb-3 font-bold">Billed To (Email)</p>
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#4E638A] font-black">Billed To (Email)</p>
                     <input
                       type="email"
                       value={editPayerEmail}
                       onChange={e => setEditPayerEmail(e.target.value)}
                       placeholder="client@example.com"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-[#00C896] transition-colors"
+                      className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 py-3.5 text-white outline-none focus:border-[#00C896] transition-all"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-[#4E638A] mb-3 font-bold">Description / Terms</p>
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#4E638A] font-black">Description / Terms</p>
                   <textarea
                     value={editDescription}
                     onChange={e => setEditDescription(e.target.value)}
-                    rows={3}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-[#00C896] transition-colors resize-none"
+                    rows={4}
+                    className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 py-4 text-sm text-white/80 outline-none focus:border-[#00C896] transition-all resize-none leading-relaxed"
                     placeholder="Project details, payment terms, etc."
                   />
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-white">Line Items</h3>
+                <div className="pt-4">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                      <div className="w-1.5 h-6 bg-[#00C896] rounded-full" />
+                      Line Items
+                    </h3>
                     <div className="text-right">
-                       <span className="text-xs text-[#8896B3] mr-2">Subtotal:</span>
-                       <span className="text-lg font-bold text-[#00C896]">${editTotal} USDC</span>
+                       <span className="text-xs text-[#4E638A] mr-3 font-bold uppercase tracking-widest">Subtotal</span>
+                       <span className="text-2xl font-black text-[#00C896]">${editTotal.toLocaleString()} USDC</span>
                     </div>
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {editItems.map((item, idx) => (
-                      <div key={idx} className="flex flex-col sm:flex-row gap-3 bg-black/20 p-4 rounded-2xl border border-white/5 group relative">
+                      <div key={idx} className="flex flex-col sm:flex-row gap-4 bg-white/[0.02] p-5 rounded-3xl border border-white/5 hover:border-white/10 transition-all group/item">
                         <div className="flex-1">
                           <input
                             type="text"
@@ -329,249 +336,292 @@ export default function PublicInvoicePage({ params }: { params: Promise<{ id: st
                               setEditItems(newItems);
                             }}
                             placeholder="Item description"
-                            className="w-full bg-transparent border-none text-sm text-white outline-none placeholder:text-white/20"
+                            className="w-full bg-transparent border-none text-base text-white outline-none placeholder:text-white/10 font-medium"
                           />
                         </div>
-                        <div className="flex gap-3 items-center">
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            onChange={e => {
-                              const newItems = [...editItems];
-                              newItems[idx].quantity = Number(e.target.value);
-                              setEditItems(newItems);
-                            }}
-                            className="w-16 bg-white/5 rounded-lg px-2 py-1 text-center text-sm text-white outline-none border border-white/10"
-                          />
-                          <span className="text-white/20 text-xs">×</span>
-                          <input
-                            type="number"
-                            value={item.unit_price}
-                            onChange={e => {
-                              const newItems = [...editItems];
-                              newItems[idx].unit_price = Number(e.target.value);
-                              setEditItems(newItems);
-                            }}
-                            className="w-24 bg-white/5 rounded-lg px-2 py-1 text-right text-sm text-[#00C896] outline-none border border-white/10"
-                          />
+                        <div className="flex gap-4 items-center">
+                          <div className="flex flex-col items-center">
+                            <span className="text-[8px] uppercase tracking-tighter text-[#4E638A] mb-1 font-bold">Qty</span>
+                            <input
+                              type="number"
+                              value={item.quantity}
+                              onChange={e => {
+                                const newItems = [...editItems];
+                                newItems[idx].quantity = Number(e.target.value);
+                                setEditItems(newItems);
+                              }}
+                              className="w-16 bg-white/5 rounded-xl px-2 py-2 text-center text-sm text-white outline-none border border-white/10 focus:border-[#00C896]"
+                            />
+                          </div>
+                          <span className="text-white/10 text-xs mt-4">×</span>
+                          <div className="flex flex-col items-end">
+                            <span className="text-[8px] uppercase tracking-tighter text-[#4E638A] mb-1 font-bold">Price</span>
+                            <input
+                              type="number"
+                              value={item.unit_price}
+                              onChange={e => {
+                                const newItems = [...editItems];
+                                newItems[idx].unit_price = Number(e.target.value);
+                                setEditItems(newItems);
+                              }}
+                              className="w-28 bg-white/5 rounded-xl px-3 py-2 text-right text-sm text-[#00C896] font-bold outline-none border border-white/10 focus:border-[#00C896]"
+                            />
+                          </div>
                           <button
                             onClick={() => setEditItems(editItems.filter((_, i) => i !== idx))}
-                            className="p-1.5 text-white/20 hover:text-[#FF5F82] transition-colors"
+                            className="p-2.5 text-white/10 hover:text-[#FF5F82] hover:bg-[#FF5F82]/10 rounded-xl transition-all mt-4"
                           >
-                            <Trash2 size={16} />
+                            <Trash2 size={18} />
                           </button>
                         </div>
                       </div>
                     ))}
                     <button
                       onClick={() => setEditItems([...editItems, { description: '', quantity: 1, unit_price: 0 }])}
-                      className="w-full py-3 rounded-2xl border border-dashed border-white/10 text-[#8896B3] hover:border-[#00C896] hover:text-[#00C896] transition-all flex items-center justify-center gap-2 text-sm font-bold"
+                      className="w-full py-5 rounded-3xl border border-dashed border-white/10 text-[#8896B3] hover:border-[#00C896] hover:text-[#00C896] hover:bg-[#00C896]/5 transition-all flex items-center justify-center gap-3 text-sm font-black uppercase tracking-widest"
                     >
-                      <Plus size={16} /> Add Line Item
+                      <Plus size={20} /> Add New Item
                     </button>
                   </div>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-8 mb-8">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <h1 className="font-[Space_Grotesk] text-3xl font-bold text-white">
-                        {invoice.title}
-                      </h1>
-                      <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest ${
-                        invoice.status === 'paid' ? 'bg-[#00C896]/10 text-[#00C896]' :
-                        invoice.status === 'cancelled' ? 'bg-[#FF5F82]/10 text-[#FF5F82]' :
-                        'bg-[#EAB308]/10 text-[#EAB308]'
+              <div className="relative z-10 animate-in fade-in duration-700">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-8 border-b border-white/5 pb-10 mb-10">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-4 mb-4">
+                      <span className={`rounded-xl px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] shadow-lg ${
+                        invoice.status === 'paid' ? 'bg-[#00C896] text-[#0A0F1E]' :
+                        invoice.status === 'cancelled' ? 'bg-[#FF5F82] text-white' :
+                        invoice.status === 'viewed' ? 'bg-[#3B82F6]/20 text-[#3B82F6] border border-[#3B82F6]/30' :
+                        'bg-[#EAB308]/20 text-[#EAB308] border border-[#EAB308]/30'
                       }`}>
                         {invoice.status}
                       </span>
+                      <p className="text-xs font-mono text-[#4E638A] uppercase tracking-widest">ID: {invoice.invoice_number}</p>
                     </div>
-                    <p className="text-sm font-mono text-[#8896B3]">Invoice #{invoice.invoice_number}</p>
-                  </div>
-                  <div className="text-left sm:text-right flex flex-col gap-3">
+                    <h1 className="font-[Space_Grotesk] text-4xl sm:text-5xl font-black text-white leading-tight mb-4">
+                      {invoice.title}
+                    </h1>
                     {isCreator && invoice.status !== 'paid' && (
                       <button
                         onClick={() => setIsEditing(true)}
-                        className="self-end flex items-center gap-2 text-xs font-black uppercase tracking-widest text-[#00C896] hover:text-[#00E5AC] transition-colors bg-[#00C896]/10 px-4 py-2 rounded-xl border border-[#00C896]/20"
+                        className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#00C896] hover:text-[#00E5AC] transition-all bg-[#00C896]/5 px-5 py-3 rounded-2xl border border-[#00C896]/20 hover:border-[#00C896]/40 hover:shadow-[0_0_20px_rgba(0,200,150,0.1)] group/btn"
                       >
-                        <Edit2 size={12} /> Edit Invoice
+                        <Edit2 size={14} className="group-hover/btn:rotate-12 transition-transform" /> Edit Invoice
                       </button>
                     )}
-                    <div>
-                      <p className="text-xs uppercase tracking-widest text-[#7BF0C9] mb-1">Total Due</p>
-                      <p className="text-4xl font-bold text-[#00C896]">${invoice.total_usdc} <span className="text-lg text-[#8896B3]">USDC</span></p>
-                    </div>
+                  </div>
+                  <div className="text-left sm:text-right bg-white/[0.03] p-6 rounded-[32px] border border-white/5 min-w-[200px]">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#00C896] mb-2 opacity-70">Total Amount Due</p>
+                    <p className="text-5xl font-black text-white leading-none">
+                      <span className="text-2xl text-[#00C896] mr-1">$</span>
+                      {invoice.total_usdc.toLocaleString()}
+                    </p>
+                    <p className="text-xs font-bold text-[#4E638A] mt-2 uppercase tracking-widest">USDC (Solana)</p>
                   </div>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-8 mb-8">
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-[#4E638A] mb-3">From</p>
+                <div className="grid sm:grid-cols-2 gap-12 mb-12">
+                  <div className="group/card">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#4E638A] mb-4">Issuer Information</p>
                     {invoice.creator && (
-                      <div className="flex items-center gap-3">
-                        <UserAvatar name={invoice.creator.display_name} className="h-10 w-10 text-xs" />
+                      <div className="flex items-center gap-4 bg-white/[0.03] p-5 rounded-3xl border border-white/5 group-hover/card:border-[#00C896]/30 transition-all duration-500">
+                        <UserAvatar name={invoice.creator.display_name} className="h-14 w-14 text-lg ring-4 ring-white/5" />
                         <div>
-                          <p className="text-sm font-bold text-white">{invoice.creator.display_name}</p>
-                          <p className="text-xs text-[#8896B3]">{shortenAddress(invoice.creator.wallet_address)}</p>
+                          <p className="text-lg font-black text-white">{invoice.creator.display_name}</p>
+                          <p className="text-xs font-mono text-[#8896B3]">{shortenAddress(invoice.creator.wallet_address)}</p>
                         </div>
                       </div>
                     )}
                   </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-[#4E638A] mb-3">Billed To</p>
-                    {(invoice.payer_name || invoice.payer_email) ? (
-                      <div>
-                        {invoice.payer_name && <p className="text-sm font-bold text-white">{invoice.payer_name}</p>}
-                        {invoice.payer_email && <p className="text-xs text-[#8896B3]">{invoice.payer_email}</p>}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-[#8896B3] italic">No payer details provided</p>
-                    )}
+                  <div className="group/card">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#4E638A] mb-4">Billed To</p>
+                    <div className="bg-white/[0.03] p-5 rounded-3xl border border-white/5 group-hover/card:border-[#3B82F6]/30 transition-all duration-500 min-h-[82px] flex flex-col justify-center">
+                      {(invoice.payer_name || invoice.payer_email) ? (
+                        <>
+                          {invoice.payer_name && <p className="text-lg font-black text-white">{invoice.payer_name}</p>}
+                          {invoice.payer_email && <p className="text-xs font-medium text-[#8896B3]">{invoice.payer_email}</p>}
+                        </>
+                      ) : (
+                        <p className="text-sm text-[#4E638A] italic">No specific payer details provided</p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {invoice.description && (
-                  <div className="mb-8 text-sm text-[#D6DEEE] bg-black/20 p-4 rounded-2xl">
-                    {invoice.description}
+                  <div className="mb-12 relative">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#4E638A] mb-4">Terms & Details</p>
+                    <div className="text-sm text-white/70 bg-white/[0.02] p-6 rounded-3xl border border-white/5 leading-relaxed italic">
+                      "{invoice.description}"
+                    </div>
                   </div>
                 )}
 
-                <div className="mb-8">
-                  <h3 className="text-lg font-bold text-white mb-4">Line Items</h3>
+                <div className="mb-4">
+                  <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-3">
+                    <div className="w-1.5 h-6 bg-[#00C896] rounded-full" />
+                    Billable Items
+                  </h3>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
+                    <table className="w-full text-left">
                       <thead>
-                        <tr className="border-b border-white/10 text-[#8896B3]">
-                          <th className="pb-3 font-medium">Description</th>
-                          <th className="pb-3 font-medium text-right">Qty</th>
-                          <th className="pb-3 font-medium text-right">Price</th>
-                          <th className="pb-3 font-medium text-right">Amount</th>
+                        <tr className="border-b border-white/10 text-[10px] font-black uppercase tracking-[0.2em] text-[#4E638A]">
+                          <th className="pb-4 pl-2">Description</th>
+                          <th className="pb-4 text-right">Quantity</th>
+                          <th className="pb-4 text-right">Unit Price</th>
+                          <th className="pb-4 text-right pr-2">Subtotal</th>
                         </tr>
                       </thead>
-                      <tbody className="text-[#D6DEEE]">
+                      <tbody className="text-white/80">
                         {invoice.items.map((item) => (
-                          <tr key={item.id} className="border-b border-white/5">
-                            <td className="py-4">{item.description}</td>
-                            <td className="py-4 text-right">{item.quantity}</td>
-                            <td className="py-4 text-right">${item.unit_price}</td>
-                            <td className="py-4 text-right font-bold">${item.amount_usdc}</td>
+                          <tr key={item.id} className="border-b border-white/[0.03] hover:bg-white/[0.01] transition-colors group/row">
+                            <td className="py-6 pl-2 font-medium group-hover/row:text-white transition-colors">{item.description}</td>
+                            <td className="py-6 text-right font-mono text-sm">{item.quantity}</td>
+                            <td className="py-6 text-right font-mono text-sm">${item.unit_price.toLocaleString()}</td>
+                            <td className="py-6 text-right font-black text-[#00C896] pr-2">${item.amount_usdc.toLocaleString()}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colSpan={3} className="pt-6 pb-2 text-right font-bold text-[#8896B3]">Total Amount</td>
-                          <td className="pt-6 pb-2 text-right font-bold text-xl text-white">${invoice.total_usdc} USDC</td>
+                          <td colSpan={3} className="pt-10 pb-2 text-right font-black uppercase tracking-[0.2em] text-[#4E638A] text-xs">Total Amount</td>
+                          <td className="pt-10 pb-2 text-right font-black text-3xl text-[#00C896] pr-2 underline underline-offset-8 decoration-white/10">${invoice.total_usdc.toLocaleString()}</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </section>
 
           {/* ── Right Col: Payment & Comments ──────────────────────────────── */}
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-8">
             
             {/* Payment Section */}
-            <div className="rounded-[32px] border border-[#1A2235] bg-[#0D1B35] p-6 shadow-2xl">
+            <div className="rounded-[40px] border border-white/10 bg-[#0D1B35]/80 backdrop-blur-xl p-8 shadow-2xl relative overflow-hidden group/pay">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-[#00C896]/5 blur-3xl rounded-full -mr-16 -mt-16" />
+              
               {invoice.status === 'paid' ? (
-                <div className="text-center p-6">
-                  <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-[#00C896]/10 flex items-center justify-center text-[#00C896]">
-                    <CheckCircle2 size={40} />
+                <div className="text-center py-4 relative z-10">
+                  <div className="mx-auto mb-6 h-20 w-20 rounded-full bg-[#00C896]/10 flex items-center justify-center text-[#00C896] shadow-[0_0_40px_rgba(0,200,150,0.2)]">
+                    <CheckCircle2 size={48} />
                   </div>
-                  <h3 className="text-xl font-bold text-white mb-1">Invoice Paid</h3>
-                  <p className="text-sm text-[#8896B3] mb-4">
-                    Paid on {invoice.paid_at ? new Date(invoice.paid_at).toLocaleDateString() : 'recently'}
+                  <h3 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Payment Received</h3>
+                  <p className="text-sm text-[#8896B3] mb-6">
+                    Processed on {invoice.paid_at ? new Date(invoice.paid_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : 'recently'}
                   </p>
                   {invoice.tx_signature && (
                     <a
                       href={`https://solscan.io/tx/${invoice.tx_signature}?cluster=devnet`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 text-sm text-[#00C896] hover:underline"
+                      className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest text-[#00C896] hover:text-[#00E5AC] transition-all bg-[#00C896]/10 px-6 py-3 rounded-2xl border border-[#00C896]/20"
                     >
-                      View Receipt on Solscan <ExternalLink size={14} />
+                      Inspect on Explorer <ExternalLink size={14} />
                     </a>
                   )}
                 </div>
               ) : invoice.status === 'cancelled' ? (
-                <div className="text-center p-6 text-[#FF5F82]">
-                  <h3 className="text-xl font-bold mb-2">Invoice Cancelled</h3>
-                  <p className="text-sm opacity-80">This invoice is no longer valid.</p>
+                <div className="text-center py-6 text-[#FF5F82] relative z-10">
+                  <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-[#FF5F82]/10 flex items-center justify-center">
+                    <X size={32} />
+                  </div>
+                  <h3 className="text-xl font-black mb-2 uppercase">Invoice Void</h3>
+                  <p className="text-sm opacity-80">This billing record has been cancelled by the issuer.</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-4">
-                  <div className="mb-2">
-                    <h2 className="text-xl font-bold text-white text-center">Payment</h2>
+                <div className="flex flex-col gap-6 relative z-10">
+                  <div className="text-center">
+                    <h2 className="text-xs font-black text-[#4E638A] uppercase tracking-[0.3em] mb-1">Settlement</h2>
+                    <p className="text-2xl font-black text-white">Execute Payment</p>
                   </div>
 
                   {payStatus === 'error' && errorMsg && (
-                    <div className="rounded-xl border border-[#FF5F82]/30 bg-[#FF5F82]/10 p-4 text-center text-[#FF5F82] text-sm break-words">
-                      <AlertCircle className="inline-block mr-1 mb-0.5" size={16} />
+                    <div className="rounded-2xl border border-[#FF5F82]/30 bg-[#FF5F82]/10 p-5 text-center text-[#FF5F82] text-xs leading-relaxed animate-in zoom-in-95 duration-300">
+                      <AlertCircle className="inline-block mr-2 mb-0.5" size={16} />
                       {errorMsg}
-                      <button onClick={() => setPayStatus('idle')} className="block mx-auto mt-2 text-xs underline hover:text-white transition-colors">
-                        Try again
+                      <button onClick={() => setPayStatus('idle')} className="block mx-auto mt-3 font-black uppercase tracking-widest text-[10px] underline hover:text-white transition-colors">
+                        Re-attempt
                       </button>
                     </div>
                   )}
                   
                   {!connected ? (
-                    <WalletConnectButton className="!h-14 !w-full !rounded-2xl !bg-[#00C896] !font-bold !text-[#0A0F1E] !text-lg" />
+                    <div className="flex flex-col gap-4">
+                      <p className="text-center text-xs text-[#8896B3] px-4">Connect your Solana wallet to settle this invoice using USDC.</p>
+                      <WalletConnectButton className="!h-16 !w-full !rounded-[24px] !bg-gradient-to-r !from-[#00C896] !to-[#00E5AC] !font-black !text-[#0A0F1E] !text-lg !shadow-xl !border-0 hover:!scale-[1.02] active:!scale-95 transition-all" />
+                    </div>
                   ) : isCreator ? (
-                    <div className="rounded-xl border border-[#00C896]/30 bg-[#00C896]/10 p-4 text-center text-[#00C896] text-sm">
-                      <ShieldCheck className="mx-auto mb-2" size={24} />
-                      You are the creator. Share this link to get paid.
+                    <div className="rounded-3xl border border-[#00C896]/20 bg-[#00C896]/5 p-6 text-center text-[#00C896]">
+                      <ShieldCheck className="mx-auto mb-3" size={32} />
+                      <p className="text-xs font-bold leading-relaxed">
+                        You are viewing your own invoice. Share the public URL with your client to receive payment.
+                      </p>
                     </div>
                   ) : (
                     <button
                       onClick={handlePay}
                       disabled={payStatus !== 'idle' && payStatus !== 'error'}
-                      className="w-full bg-[#00C896] text-[#0A0F1E] font-bold py-4
-                                 rounded-2xl text-lg hover:bg-[#00B085] transition-colors
-                                 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full bg-gradient-to-r from-[#00C896] to-[#00E5AC] text-[#0A0F1E] font-black py-5
+                                 rounded-[24px] text-lg hover:shadow-[0_20px_40px_-10px_rgba(0,200,150,0.4)] transition-all
+                                 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed group/paybtn overflow-hidden relative"
                     >
-                      {payStatus === 'idle' ? `Pay $${invoice.total_usdc} USDC` :
-                       payStatus === 'building' ? 'Preparing...' :
-                       payStatus === 'signing' ? 'Confirm in Wallet...' :
-                       payStatus === 'confirming' ? 'Confirming on-chain...' :
-                       payStatus === 'done' ? '✅ Paid!' :
-                       '❌ Payment Failed - Try Again'}
+                      <span className="relative z-10 flex items-center justify-center gap-3">
+                        {payStatus === 'idle' ? `Settle $${invoice.total_usdc.toLocaleString()} USDC` :
+                         payStatus === 'building' ? 'Validating...' :
+                         payStatus === 'signing' ? 'Awaiting Signature...' :
+                         payStatus === 'confirming' ? 'Finalizing...' :
+                         payStatus === 'done' ? 'Success!' :
+                         'Retry Payment'}
+                        {payStatus !== 'idle' && payStatus !== 'done' && <Loader2 size={20} className="animate-spin" />}
+                      </span>
                     </button>
                   )}
-                  <p className="text-center text-xs text-[#4E638A] flex items-center justify-center gap-1 mt-2">
-                    <ShieldCheck size={12} /> Secure Solana Transfer
-                  </p>
+                  <div className="flex flex-col items-center gap-4 border-t border-white/5 pt-6">
+                    <p className="text-[10px] font-black text-[#4E638A] uppercase tracking-[0.2em] flex items-center gap-2">
+                      <ShieldCheck size={14} className="text-[#00C896]" /> Verified Solana Transaction
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Comments Section */}
-            <div className="rounded-[32px] border border-[#1A2235] bg-[#0D1B35] p-6 shadow-2xl flex flex-col h-[400px]">
-              <div className="flex items-center gap-2 mb-4 text-white">
-                <MessageSquare size={18} />
-                <h3 className="font-bold">Discussion / Reviews</h3>
+            <div className="rounded-[40px] border border-white/10 bg-[#0D1B35]/50 backdrop-blur-xl p-8 shadow-2xl flex flex-col h-[450px] group/comments">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3 text-white">
+                  <MessageSquare size={20} className="text-[#3B82F6]" />
+                  <h3 className="font-black uppercase tracking-widest text-xs">Activity Log</h3>
+                </div>
+                <span className="text-[10px] font-black text-[#4E638A] uppercase bg-white/5 px-3 py-1 rounded-full">
+                  {comments.length} Messages
+                </span>
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-2 space-y-4 mb-4">
+              <div className="flex-1 overflow-y-auto pr-3 space-y-6 mb-6 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                 {comments.length === 0 ? (
-                  <div className="text-center text-sm text-[#4E638A] pt-10">
-                    No comments yet. Leave a review or question below.
+                  <div className="text-center py-12">
+                    <div className="mx-auto w-12 h-12 rounded-2xl bg-white/[0.03] flex items-center justify-center mb-4 text-[#4E638A]">
+                      <MessageSquare size={24} />
+                    </div>
+                    <p className="text-xs text-[#4E638A] font-bold uppercase tracking-widest px-8 leading-relaxed">
+                      No discussion history yet for this invoice.
+                    </p>
                   </div>
                 ) : (
                   comments.map((comment) => (
-                    <div key={comment.id} className={`flex flex-col gap-1 ${comment.author_role === 'creator' ? 'items-end' : 'items-start'}`}>
-                      <div className="flex items-center gap-2 text-[10px] text-[#8896B3]">
-                        <span className="font-bold">{comment.author_name || (comment.author_role === 'creator' ? 'Creator' : 'Payer')}</span>
-                        {comment.author_role === 'creator' && <span className="bg-[#00C896]/20 text-[#00C896] px-1.5 rounded uppercase">Creator</span>}
+                    <div key={comment.id} className={`flex flex-col gap-2 ${comment.author_role === 'creator' ? 'items-end' : 'items-start'}`}>
+                      <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-[#4E638A]">
+                        {comment.author_role === 'creator' && <span className="text-[#00C896] bg-[#00C896]/10 px-2 py-0.5 rounded">Owner</span>}
+                        <span>{comment.author_name || (comment.author_role === 'creator' ? 'Creator' : 'Payer')}</span>
                       </div>
-                      <div className={`max-w-[85%] rounded-2xl p-3 text-sm ${
+                      <div className={`max-w-[90%] rounded-3xl px-5 py-4 text-sm leading-relaxed shadow-lg transition-all ${
                         comment.author_role === 'creator' 
-                          ? 'bg-[#00C896]/10 text-[#00C896] rounded-tr-sm border border-[#00C896]/20' 
-                          : 'bg-[#1A2235] text-white rounded-tl-sm'
+                          ? 'bg-gradient-to-br from-[#00C896]/20 to-[#00C896]/5 text-[#00C896] rounded-tr-none border border-[#00C896]/20' 
+                          : 'bg-white/[0.03] text-white/90 rounded-tl-none border border-white/5'
                       }`}>
                         {comment.body}
                       </div>
@@ -581,20 +631,20 @@ export default function PublicInvoicePage({ params }: { params: Promise<{ id: st
               </div>
 
               {/* Add Comment */}
-              <div className="relative mt-auto">
+              <div className="relative mt-auto pt-4 border-t border-white/5">
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Add a comment or review..."
-                  className="w-full rounded-2xl border border-[#1A2235] bg-[#081122] pl-4 pr-12 py-3 text-sm text-white outline-none focus:border-[#00C896] transition-colors resize-none"
+                  placeholder="Type a message or review..."
+                  className="w-full rounded-2xl border border-white/10 bg-white/[0.02] pl-5 pr-14 py-4 text-sm text-white outline-none focus:border-[#3B82F6] focus:bg-white/[0.05] transition-all resize-none leading-relaxed placeholder:text-white/10"
                   rows={2}
                 />
                 <button
                   onClick={handleAddComment}
                   disabled={!newComment.trim() || isSubmittingComment}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-[#1A2235] p-2 text-[#8896B3] hover:text-[#00C896] hover:bg-[#2C3B5E] disabled:opacity-50 transition-colors"
+                  className="absolute right-3 top-[calc(50%+8px)] -translate-y-1/2 rounded-xl bg-[#3B82F6] p-2.5 text-white shadow-lg hover:shadow-[#3B82F6]/30 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:scale-100 transition-all"
                 >
-                  {isSubmittingComment ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                  {isSubmittingComment ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
                 </button>
               </div>
             </div>
@@ -602,13 +652,14 @@ export default function PublicInvoicePage({ params }: { params: Promise<{ id: st
           </div>
         </div>
 
-        <p className="pb-4 pt-12 text-center text-xs text-[#8896B3]">
-          Powered by{' '}
-          <a href="/" className="text-[#00C896] hover:underline font-bold">
-            PayLink
+        <p className="pb-12 pt-20 text-center text-[10px] font-black uppercase tracking-[0.4em] text-[#4E638A]">
+          Secured by{' '}
+          <a href="/" className="text-[#00C896] hover:text-white transition-colors">
+            PayLink Protocol
           </a>
         </p>
       </div>
     </main>
   );
+
 }
