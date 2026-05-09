@@ -598,10 +598,14 @@ export default function PaymentsPage() {
               ) : (
                 <div className="flex flex-col gap-2">
                   {incomingClaims.map((claim) => {
-                    const title = claim.payroll_schedules?.title || 'Payroll payment';
-                    const unlockDate = new Date(claim.claimable_at);
                     const isClaimed = claim.status === 'claimed';
                     const isCancelled = claim.status === 'cancelled';
+                    
+                    // HIDE ALL "to be claimed" transactions or logic for now, only show locked.
+                    if (isClaimed || isCancelled || claim.is_unfunded || claim.can_claim) return null;
+
+                    const title = claim.payroll_schedules?.title || 'Payroll payment';
+                    const unlockDate = new Date(claim.claimable_at);
                     const statusLabel =
                       isClaimed ? 'Claimed' :
                       isCancelled ? 'Rejected' :
@@ -792,6 +796,10 @@ export default function PaymentsPage() {
                                     {claimsInCycle.map((claim) => {
                                       const isClaimed = claim.status === 'claimed';
                                       const isRejected = claim.status === 'cancelled';
+                                      
+                                      // HIDE ALL "to be claimed" transactions or logic for now, only show locked.
+                                      if (isClaimed || isRejected || claim.is_unfunded || claim.can_claim) return null;
+
                                       return (
                                         <div key={claim.id} className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between transition-all hover:bg-black/30">
                                           <div className="flex items-center gap-3">

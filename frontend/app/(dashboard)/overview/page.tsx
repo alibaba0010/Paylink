@@ -257,10 +257,14 @@ export default function OverviewPage() {
             <p className="text-sm text-[#8896B3]">Loading scheduled payments...</p>
           ) : scheduledClaims.length > 0 ? (
             scheduledClaims.map((claim) => {
-              const title = claim.payroll_schedules?.title || "Payroll payment";
-              const unlockDate = new Date(claim.claimable_at);
               const isClaimed = claim.status === "claimed";
               const isCancelled = claim.status === "cancelled";
+              
+              // HIDE ALL "to be claimed" transactions or logic for now, only show locked.
+              if (isClaimed || isCancelled || claim.is_unfunded || claim.can_claim) return null;
+
+              const title = claim.payroll_schedules?.title || "Payroll payment";
+              const unlockDate = new Date(claim.claimable_at);
               const statusLabel =
                 isClaimed ? "Claimed" :
                 isCancelled ? "Rejected" :
