@@ -2,6 +2,13 @@ SHELL := /bin/bash
 
 API_HEALTH_URL ?= http://127.0.0.1:8001/health
 
+install:
+	@echo "Installing API dependencies..."
+	@cd api && npm install
+	@echo "Installing Frontend dependencies..."
+	@cd frontend && npm install
+	@echo "Dependencies installed successfully."
+
 dev:
 	@set -euo pipefail; \
 	trap 'kill 0' EXIT; \
