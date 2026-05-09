@@ -6,7 +6,7 @@ import bs58 from 'bs58';
 import { SendTransactionError, Transaction } from '@solana/web3.js';
 import {
   BadgeCheck, ChevronDown, ChevronUp, Loader2, Calendar, History, ArrowRightLeft, Clock,
-  Zap, AlertTriangle, CheckCircle2, X, Lock, ArrowLeft, Download
+  Zap, AlertTriangle, CheckCircle2, X, Lock, ArrowLeft, Download, Users
 } from 'lucide-react';
 import {
   cancelPayroll, initiateMultiPayment, confirmBulkPayment, fetchPaymentHistory,
@@ -66,6 +66,7 @@ export default function PaymentsPage() {
   const [incomingClaims, setIncomingClaims] = useState<ScheduledPaymentClaim[]>([]);
   const [isLoadingIncoming, setIsLoadingIncoming] = useState(false);
   const [rejectingClaimId, setRejectingClaimId] = useState<string | null>(null);
+  const [expandedCycleId, setExpandedCycleId] = useState<string | null>(null);
 
   const selectedPayroll = schedules.find(p => p.id === selectedId) ?? null;
   const selectedOutgoingClaims = outgoingClaims.filter(claim => claim.payroll_id === selectedId);
@@ -721,67 +722,127 @@ export default function PaymentsPage() {
                   ))}
                 </div>
 
-                {/* Active cycles overview */}
+                {/* Unified Cycle & Payments Accordion */}
                 {(selectedPayroll.cycles?.length ?? 0) > 0 && (
-                  <div className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-5">
-                    <p className="text-xs font-bold text-[#4E638A] uppercase tracking-wider mb-3">Payment Cycles</p>
-                    <div className="flex flex-col gap-2">
-                      {selectedPayroll.cycles.map(c => (
-                        <div key={c.id} className="flex items-center justify-between text-sm">
-                          <span className="text-white">Cycle #{c.cycle_number} — due {new Date(c.due_at).toLocaleDateString()}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                            c.status === 'signed' ? 'bg-[#00C896]/20 text-[#00C896]' :
-                            c.status === 'cancelled' ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
-                            'bg-amber-500/20 text-amber-400'
-                          }`}>{c.status}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {selectedOutgoingClaims.length > 0 && (
-                  <div className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-5">
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[#4E638A]">Sent Escrow Payments</p>
+                  <div className="space-y-4">
+                    <p className="text-xs font-bold text-[#4E638A] uppercase tracking-widest px-1">Payment Cycles & Claims</p>
                     <div className="flex flex-col gap-3">
-                      {selectedOutgoingClaims.map((claim) => {
-                        const isClaimed = claim.status === 'claimed';
-                        const isRejected = claim.status === 'cancelled';
+                      {[...selectedPayroll.cycles].sort((a, b) => b.cycle_number - a.cycle_number).map(c => {
+                        const isExpanded = expandedCycleId === c.id;
+                        const claimsInCycle = selectedOutgoingClaims.filter(cl => cl.cycle_id === c.id);
+                        const totalCycleAmount = claimsInCycle.reduce((sum, cl) => sum + Number(cl.amount_usdc), 0);
+
                         return (
-                          <div key={claim.id} className="flex flex-col gap-3 rounded-2xl border border-white/5 bg-black/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-bold text-white">${Number(claim.amount_usdc).toFixed(2)} scheduled payment</p>
-                              <p className="mt-1 text-xs text-[#8896B3]">
-                                Recipient {claim.wallet_address ? shortenAddress(claim.wallet_address, 5, 5) : 'wallet'} · unlocks {new Date(claim.claimable_at).toLocaleDateString()}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={`rounded-full px-2 py-1 text-xs font-bold ${
-                                isClaimed ? 'bg-[#00C896]/20 text-[#00C896]' :
-                                isRejected ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
-                                claim.can_claim ? 'bg-amber-500/20 text-amber-400' :
-                                'bg-[#1A2235] text-[#8896B3]'
-                              }`}>
-                                {isClaimed ? 'claimed' : isRejected ? 'rejected' : claim.can_claim ? 'available' : 'locked'}
-                              </span>
-                              {!isClaimed && !isRejected && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRejectClaim(claim.id)}
-                                  disabled={rejectingClaimId === claim.id}
-                                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FF5F82]/40 px-3 text-xs font-bold text-[#FF5F82] hover:bg-[#FF5F82]/10 disabled:opacity-40"
-                                >
-                                  {rejectingClaimId === claim.id ? <Loader2 className="animate-spin" size={14} /> : <X size={14} />}
-                                  Reject
-                                </button>
-                              )}
-                            </div>
+                          <div 
+                            key={c.id} 
+                            className={`group rounded-[24px] border transition-all duration-300 overflow-hidden ${
+                              isExpanded 
+                                ? 'border-[#00C896]/30 bg-[#0D1B35] shadow-2xl shadow-black/40' 
+                                : 'border-white/5 bg-[#0A0F1E]/60 hover:border-white/10 hover:bg-[#0D1B35]/40'
+                            }`}
+                          >
+                            {/* Cycle Header */}
+                            <button
+                              type="button"
+                              onClick={() => setExpandedCycleId(isExpanded ? null : c.id)}
+                              className="w-full flex items-center justify-between p-5 text-left transition-all"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className={`flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
+                                  c.status === 'signed' ? 'bg-[#00C896]/10 text-[#00C896]' : 'bg-amber-500/10 text-amber-400'
+                                }`}>
+                                  <Clock size={20} className={isExpanded ? 'animate-pulse' : ''} />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-black text-white text-base">Cycle #{c.cycle_number}</span>
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
+                                      c.status === 'signed' ? 'bg-[#00C896]/20 text-[#00C896]' :
+                                      c.status === 'cancelled' ? 'bg-[#FF5F82]/20 text-[#FF5F82]' :
+                                      'bg-amber-500/20 text-amber-400'
+                                    }`}>
+                                      {c.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-[#8896B3] mt-0.5">Due {new Date(c.due_at).toLocaleDateString()}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-6">
+                                <div className="text-right hidden sm:block">
+                                  <p className="text-[10px] font-bold text-[#4E638A] uppercase tracking-widest mb-0.5">Cycle Total</p>
+                                  <p className="text-sm font-black text-white">${totalCycleAmount.toFixed(2)}</p>
+                                </div>
+                                <div className={`h-8 w-8 rounded-lg flex items-center justify-center transition-all ${isExpanded ? 'bg-[#00C896] text-[#0A0F1E]' : 'bg-white/5 text-[#4E638A] group-hover:text-white'}`}>
+                                  {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                                </div>
+                              </div>
+                            </button>
+
+                            {/* Cycle Details (Claims) */}
+                            {isExpanded && (
+                              <div className="px-5 pb-5 animate-in slide-in-from-top-2 duration-300">
+                                <div className="h-px bg-white/5 mb-5" />
+                                {claimsInCycle.length === 0 ? (
+                                  <div className="py-8 text-center bg-black/20 rounded-2xl border border-dashed border-white/5">
+                                    <p className="text-xs text-[#4E638A] font-bold uppercase tracking-widest">No claims generated for this cycle</p>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col gap-3">
+                                    {claimsInCycle.map((claim) => {
+                                      const isClaimed = claim.status === 'claimed';
+                                      const isRejected = claim.status === 'cancelled';
+                                      return (
+                                        <div key={claim.id} className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between transition-all hover:bg-black/30">
+                                          <div className="flex items-center gap-3">
+                                            <div className="h-10 w-10 rounded-full bg-[#1A2235] flex items-center justify-center text-[#8896B3] border border-white/5">
+                                              <Users size={18} />
+                                            </div>
+                                            <div>
+                                              <p className="text-sm font-bold text-white">
+                                                {claim.wallet_address ? shortenAddress(claim.wallet_address, 6, 6) : 'Worker'}
+                                              </p>
+                                              <p className="text-[11px] text-[#8896B3] mt-0.5">
+                                                Unlocks {new Date(claim.claimable_at).toLocaleDateString()}
+                                              </p>
+                                            </div>
+                                          </div>
+                                          
+                                          <div className="flex items-center justify-between sm:justify-end gap-3">
+                                            <div className="text-right mr-2">
+                                              <p className="text-sm font-black text-[#00C896]">${Number(claim.amount_usdc).toFixed(2)}</p>
+                                              <span className={`text-[9px] font-black uppercase tracking-[0.1em] ${
+                                                isClaimed ? 'text-[#00C896]' : isRejected ? 'text-[#FF5F82]' : claim.can_claim ? 'text-amber-400' : 'text-[#4E638A]'
+                                              }`}>
+                                                {isClaimed ? 'Claimed' : isRejected ? 'Rejected' : claim.can_claim ? 'Available' : 'Locked'}
+                                              </span>
+                                            </div>
+                                            {!isClaimed && !isRejected && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleRejectClaim(claim.id)}
+                                                disabled={rejectingClaimId === claim.id}
+                                                className="h-9 w-9 rounded-xl border border-[#FF5F82]/30 flex items-center justify-center text-[#FF5F82] hover:bg-[#FF5F82]/10 transition-all active:scale-90 disabled:opacity-40"
+                                                title="Reject Payment"
+                                              >
+                                                {rejectingClaimId === claim.id ? <Loader2 size={14} className="animate-spin" /> : <X size={16} />}
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
                   </div>
                 )}
+
 
                 <div className="rounded-2xl border border-white/5 bg-[#0A0F1E]/60 p-5">
                   <button

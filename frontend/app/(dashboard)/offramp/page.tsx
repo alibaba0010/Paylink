@@ -5,6 +5,9 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { Loader2, ArrowRight, Building, Landmark, Hash, Banknote } from 'lucide-react';
 import { getOfframpRate, initiateOffRamp } from '@/lib/api';
 import { useSolanaBalance } from '@/hooks/useSolanaBalance';
+import bankListRaw from 'nigerian-banks/dist/bankList.json';
+
+const bankList = [...bankListRaw].sort((a, b) => a.name.localeCompare(b.name));
 
 export default function OffRampPage() {
   const { publicKey } = useWallet();
@@ -138,11 +141,11 @@ export default function OffRampPage() {
                     className="w-full bg-[#0A0F1E] border border-[#1A2235] rounded-xl pl-12 pr-4 py-4 focus:border-[#00C896] outline-none text-white appearance-none transition-colors"
                   >
                     <option value="" disabled>Select your bank</option>
-                    <option value="044">Access Bank</option>
-                    <option value="011">First Bank of Nigeria</option>
-                    <option value="058">Guaranty Trust Bank (GTB)</option>
-                    <option value="033">United Bank for Africa (UBA)</option>
-                    <option value="057">Zenith Bank</option>
+                    {bankList.map((bank: any) => (
+                      <option key={bank.code} value={bank.code}>
+                        {bank.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

@@ -365,7 +365,10 @@ export default function PayrollPage() {
     if (m.mode === 'username') return !m.resolvedProfile || m.lookupState !== 'found';
     if (m.mode === 'wallet') return !m.walletInput.trim() || m.walletInput.length < 32;
     return false;
-  }) || members.some(m => !m.amount || isNaN(Number(m.amount)) || Number(m.amount) <= 0);
+  }) || members.some(m => !m.amount || isNaN(Number(m.amount)) || Number(m.amount) <= 0) || members.some(m => 
+    (m.mode === 'username' && m.usernameInput === currentUser?.username) || 
+    (m.mode === 'wallet' && m.walletInput === currentUser?.wallet_address)
+  );
 
   return (
     <div className="max-w-4xl mx-auto">

@@ -7,7 +7,7 @@ import { UserAvatar } from '@/components/UserAvatar';
 import { shortenAddress } from '@/lib/format';
 import { UserProfileClientTabs } from './UserProfileClientTabs';
 import { fetchReputationScore } from '@/lib/api';
-import { ReputationBadge } from '@/components/ReputationBadge';
+import { UserReputationDisplay } from '@/components/UserReputationDisplay';
 
 interface Props { params: Promise<{ username: string }> }
 
@@ -49,9 +49,7 @@ export default async function UserPayPage({ params }: Props) {
               )}
 
               {reputation && (
-                <div className="w-full text-left">
-                  <ReputationBadge reputation={reputation} />
-                </div>
+                <UserReputationDisplay reputation={reputation} profileUsername={username} />
               )}
             </div>
 
