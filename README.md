@@ -2,7 +2,11 @@
 
 ### On-Chain Payroll Infrastructure for Africa's Digital Workforce
 
-PayLink is a high-performance, on-chain payroll and payment infrastructure protocol built on Solana. It is purpose-built to empower the fast-growing remote and gig workforce across Africa, starting with Nigeria. By leveraging Solana's sub-second finality and near-zero transaction costs, PayLink enables seamless USDC settlement and instant local currency off-ramps.
+PayLink is a high-performance, on-chain payroll and payment infrastructure protocol built on Solana. Purpose-built for Nigeria and Africa's fast-growing remote and gig workforce, it enables employers to send USDC in salaries and payments seamlessly through smart-contract-secured payroll streams.
+
+Unlike generic payment tools, PayLink is designed to solve a critical problem: African developers, designers, and freelancers often lose 10-20% of their income to exorbitant currency conversion fees and unreliable traditional fintech platforms. PayLink slashes these overheads to under 1% by leveraging Solana's sub-second finality, near-zero transaction costs, and USDC as the core settlement layer.
+
+By integrating smart escrow, reusable pivy.me-style payment links, gasless claim architecture, and instant one-click local currency off-ramps (e.g., to Nigerian Naira via integrated P2P and local liquidity providers), PayLink bridges the gap between global decentralized finance and local fiat economies.
 
 ---
 
